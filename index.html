@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>REALMCRAFT</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='9' fill='%2367b04f'/><rect y='9' width='16' height='7' fill='%236b4a2e'/></svg>" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- Title screen -->
+  <div id="title" class="screen">
+    <div class="title-inner">
+      <h1 class="game-title">REALM<span>CRAFT</span></h1>
+      <p class="tagline">A procedural voxel wilderness</p>
+      <div class="title-form">
+        <label class="field">
+          <span>World Seed</span>
+          <input id="seed-input" type="text" placeholder="leave blank for random" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="field">
+          <span>Graphics Quality</span>
+          <select id="quality-select">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high" selected>High</option>
+            <option value="ultra">Ultra</option>
+          </select>
+        </label>
+        <button id="btn-enter" class="btn btn-primary">Enter World</button>
+        <button id="btn-title-controls" class="btn">Controls</button>
+      </div>
+      <p class="footnote">WebGL2 · classic 16×16 block textures · local edition</p>
+    </div>
+  </div>
+
+  <!-- Loading screen -->
+  <div id="loading" class="screen hidden">
+    <div class="loading-inner">
+      <h2>Shaping the world…</h2>
+      <div class="load-track"><div id="load-bar"></div></div>
+      <p id="load-label">Generating terrain</p>
+    </div>
+  </div>
+
+  <!-- Click to start overlay -->
+  <div id="click-start" class="screen hidden">
+    <div class="loading-inner">
+      <h2>World ready</h2>
+      <p class="hint">Click anywhere to enter</p>
+    </div>
+  </div>
+
+  <!-- Pause screen -->
+  <div id="pause" class="screen hidden translucent">
+    <div class="pause-inner">
+      <h2>Paused</h2>
+      <div class="pause-buttons">
+        <button id="btn-resume" class="btn btn-primary">Resume</button>
+        <button id="btn-pause-controls" class="btn">Controls</button>
+        <button id="btn-pause-settings" class="btn">Settings</button>
+        <button id="btn-quit" class="btn">Quit to Title</button>
+      </div>
+      <div id="settings-panel" class="panel hidden">
+        <h3>Settings</h3>
+        <label class="row"><span>Master Volume</span><input id="opt-volume" type="range" min="0" max="1" step="0.05" /></label>
+        <label class="row"><span>Render Distance</span><input id="opt-render" type="range" min="4" max="12" step="1" /><b id="opt-render-val"></b></label>
+        <label class="row"><span>Quality</span>
+          <select id="opt-quality">
+            <option value="low">Low</option><option value="medium">Medium</option>
+            <option value="high">High</option><option value="ultra">Ultra</option>
+          </select>
+        </label>
+        <label class="row"><span>Head Bob</span><input id="opt-bob" type="checkbox" /></label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls overlay (shared by title + pause) -->
+  <div id="controls" class="screen hidden translucent">
+    <div class="panel controls-panel">
+      <h3>Controls</h3>
+      <div class="controls-grid">
+        <b>W A S D</b><span>Move</span>
+        <b>Mouse</b><span>Look</span>
+        <b>Space</b><span>Jump / Swim up / Fly up</span>
+        <b>Shift</b><span>Sprint</span>
+        <b>C / Ctrl</b><span>Crouch / Fly down</span>
+        <b>Left Click</b><span>Break block (hold)</span>
+        <b>Right Click</b><span>Place block</span>
+        <b>Wheel / 1–9</b><span>Select block</span>
+        <b>F</b><span>Flashlight</span>
+        <b>G</b><span>Toggle flight</span>
+        <b>T</b><span>Fast-forward time</span>
+        <b>Y</b><span>Cycle weather</span>
+        <b>Esc</b><span>Pause</span>
+      </div>
+      <button id="btn-close-controls" class="btn btn-primary">Close</button>
+    </div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div id="crosshair"></div>
+    <div id="info"></div>
+    <div id="hotbar-wrap">
+      <div id="block-name"></div>
+      <div id="hotbar"></div>
+    </div>
+  </div>
+
+  <div id="underwater-overlay"></div>
+  <div id="vignette"></div>
+  <div id="toast" class="hidden"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

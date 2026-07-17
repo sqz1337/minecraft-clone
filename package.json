@@ -1,0 +1,20 @@
+{
+  "name": "realmcraft",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "textures:install": "bash scripts/install-minecraft-textures.sh",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.180.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.3.5"
+  }
+}
