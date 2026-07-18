@@ -3,6 +3,7 @@ import { clamp, lerp } from '../util/math'
 import { B, SOLID, CROSS, SOUND_CAT } from '../world/Blocks'
 import type { World } from '../world/World'
 import type { AudioMan } from '../audio/Audio'
+import type { GameMode } from '../core/Settings'
 
 const HALF = 0.3
 const HEIGHT = 1.8
@@ -17,6 +18,8 @@ const SWIM = 3.1
 const FLY = 13
 const FLY_SPRINT = 26
 const WATER_SURFACE = 0.875
+const COYOTE_TIME = 0.1
+const JUMP_BUFFER_TIME = 0.13
 
 export class Player {
   pos = new THREE.Vector3()      // feet center
@@ -25,12 +28,20 @@ export class Player {
   pitch = 0
   onGround = false
   flying = false
+  noclip = false
   crouching = false
   sprinting = false
   inWater = false
   headUnderwater = false
   enabled = false
   headBobEnabled = true
+  health = 20
+  hunger = 20
+  air = 10
+  exhaustion = 0
+  onStatsChanged: () => void = () => {}
+  onDamage: (amount: number) => void = () => {}
+  onDeath: () => void = () => {}
 
   camera: THREE.PerspectiveCamera
   private world: World
@@ -44,11 +55,18 @@ export class Player {
   private wasInWater = false
   private fallSpeedPeak = 0
   private coyote = 0
+  private jumpBuffer = 0
   private swimStrokeTimer = 0
+  private damageCooldown = 0
+  private drownTimer = 1
+  private hungerTimer = 4
+  private regenTimer = 4
+  private dead = false
+  private hurtTime = 0
   flashlight: THREE.SpotLight
   private flashOn = false
 
-  constructor(camera: THREE.PerspectiveCamera, world: World, audio: AudioMan) {
+  constructor(camera: THREE.PerspectiveCamera, world: World, audio: AudioMan, private mode: GameMode = 'creative') {
     this.camera = camera
     this.world = world
     this.audio = audio
@@ -66,15 +84,13 @@ export class Player {
     document.addEventListener('keydown', (e) => {
       if (!this.enabled) return
       this.keys.add(e.code)
-      if (e.code === 'Space') e.preventDefault()
-      if (e.code === 'Space' && this.onGround && !this.flying && !this.inWater) {
-        this.vel.y = JUMP_V
-        this.onGround = false
-        this.audio.jump()
+      if (e.code === 'Space') {
+        e.preventDefault()
+        if (!e.repeat && !this.flying && !this.noclip && !this.inWater) this.jumpBuffer = JUMP_BUFFER_TIME
       }
     })
     document.addEventListener('keyup', (e) => this.keys.delete(e.code))
-    window.addEventListener('blur', () => this.keys.clear())
+    window.addEventListener('blur', () => this.clearKeys())
     dom.addEventListener('mousemove', (e) => {
       if (!this.enabled || document.pointerLockElement === null) return
       this.yaw -= e.movementX * 0.0022
@@ -83,13 +99,16 @@ export class Player {
     })
   }
 
-  clearKeys(): void { this.keys.clear() }
+  clearKeys(): void {
+    this.keys.clear()
+    this.jumpBuffer = 0
+  }
 
-  teleport(x: number, y: number, z: number, yaw = 0): void {
+  teleport(x: number, y: number, z: number, yaw = 0, pitch = -0.08): void {
     this.pos.set(x, y, z)
     this.vel.set(0, 0, 0)
     this.yaw = yaw
-    this.pitch = -0.08
+    this.pitch = clamp(pitch, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01)
     this.syncCamera(0)
   }
 
@@ -103,6 +122,58 @@ export class Player {
     this.flying = !this.flying
     if (this.flying) this.vel.y = 0
     return this.flying
+  }
+
+  restoreSurvival(health = 20, hunger = 20, air = 10, exhaustion = 0): void {
+    this.health = clamp(health, 1, 20)
+    this.hunger = clamp(hunger, 0, 20)
+    this.air = clamp(air, 0, 10)
+    this.exhaustion = Math.max(0, exhaustion)
+    this.dead = false
+    this.onStatsChanged()
+  }
+
+  resetAfterDeath(): void {
+    this.health = 20
+    this.hunger = 20
+    this.air = 10
+    this.exhaustion = 0
+    this.dead = false
+    this.damageCooldown = 0
+    this.onStatsChanged()
+  }
+
+  addExhaustion(amount: number): void {
+    if (this.mode === 'survival' && !this.noclip) this.exhaustion += Math.max(0, amount)
+  }
+
+  damage(amount: number): void {
+    if (this.mode !== 'survival' || this.noclip || this.dead || amount <= 0 || this.damageCooldown > 0) return
+    this.health = Math.max(0, this.health - amount)
+    this.damageCooldown = 0.55
+    this.hurtTime = 1
+    this.audio.hurt()
+    this.onDamage(amount)
+    this.onStatsChanged()
+    if (this.health <= 0) {
+      this.dead = true
+      this.onDeath()
+    }
+  }
+
+  setNoclip(enabled: boolean): void {
+    this.noclip = enabled
+    this.onGround = false
+    this.inWater = false
+    this.headUnderwater = false
+    this.coyote = 0
+    this.jumpBuffer = 0
+    this.vel.y = 0
+  }
+
+  toggleNoclip(): boolean {
+    this.setNoclip(!this.noclip)
+    return this.noclip
   }
 
   eyePos(target: THREE.Vector3): THREE.Vector3 {
@@ -143,30 +214,36 @@ export class Player {
   }
 
   update(dt: number): void {
+    this.hurtTime = Math.max(0, this.hurtTime - dt * 1.65)
+    const startX = this.pos.x, startZ = this.pos.z
     const k = this.keys
+    const freeFlight = this.flying || this.noclip
     const fwd = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0)
     const strafe = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0)
-    this.crouching = (k.has('ControlLeft') || k.has('KeyC')) && !this.flying
-    this.sprinting = (k.has('ShiftLeft') || k.has('ShiftRight')) && fwd > 0 && !this.crouching
+    this.crouching = (k.has('ControlLeft') || k.has('KeyC')) && !freeFlight
+    this.sprinting = (k.has('ShiftLeft') || k.has('ShiftRight')) && fwd > 0 && !this.crouching &&
+      (this.mode === 'creative' || this.hunger > 6)
 
     // water state
     const feetBlock = this.world.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + 0.4), Math.floor(this.pos.z))
-    this.inWater = feetBlock === B.WATER
+    this.inWater = !this.noclip && feetBlock === B.WATER
     const eyeY = this.pos.y + (this.crouching ? EYE_CROUCH : EYE)
     const eyeBlock = this.world.getBlock(Math.floor(this.pos.x), Math.floor(eyeY), Math.floor(this.pos.z))
-    this.headUnderwater = eyeBlock === B.WATER && (eyeY - Math.floor(eyeY)) < WATER_SURFACE
+    this.headUnderwater = !this.noclip && eyeBlock === B.WATER && (eyeY - Math.floor(eyeY)) < WATER_SURFACE
 
     if (this.inWater && !this.wasInWater && this.vel.y < -3) {
       this.audio.splash(true)
     }
     this.wasInWater = this.inWater
 
+    this.tryGroundJump()
+
     // wanted horizontal velocity in world space
     const sinY = Math.sin(this.yaw), cosY = Math.cos(this.yaw)
     const dirX = -sinY * fwd + cosY * strafe
     const dirZ = -cosY * fwd - sinY * strafe
     const dirLen = Math.hypot(dirX, dirZ)
-    let speed = this.flying
+    let speed = freeFlight
       ? (this.sprinting ? FLY_SPRINT : FLY)
       : this.inWater ? SWIM
         : this.crouching ? CROUCH_SPEED
@@ -174,13 +251,13 @@ export class Player {
 
     const tx = dirLen > 0 ? (dirX / dirLen) * speed : 0
     const tz = dirLen > 0 ? (dirZ / dirLen) * speed : 0
-    const accel = this.flying ? 8 : this.onGround ? 12 : this.inWater ? 4 : 2.2
+    const accel = freeFlight ? 8 : this.onGround ? 12 : this.inWater ? 4 : 2.2
     const blend = clamp(accel * dt, 0, 1)
     this.vel.x = lerp(this.vel.x, tx, blend)
     this.vel.z = lerp(this.vel.z, tz, blend)
 
     // vertical motion
-    if (this.flying) {
+    if (freeFlight) {
       const up = (k.has('Space') ? 1 : 0) - (k.has('ControlLeft') || k.has('KeyC') ? 1 : 0)
       this.vel.y = lerp(this.vel.y, up * 9, clamp(10 * dt, 0, 1))
     } else if (this.inWater) {
@@ -252,14 +329,29 @@ export class Player {
         this.audio.land(impact > 16)
         this.landDip = Math.min(0.3, impact * 0.014)
       }
+      if (impact > 11) this.damage(Math.max(1, Math.ceil((impact - 11) / 2.4)))
       this.fallSpeedPeak = 0
     }
     if (this.onGround) {
-      this.coyote = 0.09
+      this.coyote = COYOTE_TIME
       this.fallSpeedPeak = 0
     } else {
-      this.coyote -= dt
+      this.coyote = Math.max(0, this.coyote - dt)
     }
+
+    if (this.noclip) {
+      this.pos.addScaledVector(this.vel, dt)
+      this.onGround = false
+      this.fallSpeedPeak = 0
+      this.stepAccum = 0
+      this.updateSurvival(dt, startX, startZ)
+      this.syncCamera(dt)
+      return
+    }
+
+    // Consume a press made just before landing without waiting for another keydown.
+    this.tryGroundJump()
+    this.jumpBuffer = Math.max(0, this.jumpBuffer - dt)
 
     // footsteps
     const hSpeed = Math.hypot(this.vel.x, this.vel.z)
@@ -276,16 +368,88 @@ export class Player {
 
     // safety net: never fall through the world
     if (this.pos.y < -10) {
-      const ty = this.world.topSolidY(Math.floor(this.pos.x), Math.floor(this.pos.z))
-      this.pos.y = (ty >= 0 ? ty : 64) + 1.2
-      this.vel.set(0, 0, 0)
+      if (this.mode === 'survival') this.damage(100)
+      else {
+        const ty = this.world.topSolidY(Math.floor(this.pos.x), Math.floor(this.pos.z))
+        this.pos.y = (ty >= 0 ? ty : 64) + 1.2
+        this.vel.set(0, 0, 0)
+      }
     }
 
+    this.updateSurvival(dt, startX, startZ)
     this.syncCamera(dt)
+  }
+
+  private updateSurvival(dt: number, startX: number, startZ: number): void {
+    if (this.mode !== 'survival' || this.dead) return
+    this.damageCooldown = Math.max(0, this.damageCooldown - dt)
+
+    if (!this.noclip) {
+      const distance = Math.hypot(this.pos.x - startX, this.pos.z - startZ)
+      this.addExhaustion(distance * (this.sprinting ? 0.1 : this.inWater ? 0.04 : 0.01))
+    }
+    while (this.exhaustion >= 4 && this.hunger > 0) {
+      this.exhaustion -= 4
+      this.hunger = Math.max(0, this.hunger - 1)
+      this.onStatsChanged()
+    }
+
+    if (this.headUnderwater && !this.noclip) {
+      this.air = Math.max(0, this.air - dt)
+      if (this.air <= 0) {
+        this.drownTimer -= dt
+        if (this.drownTimer <= 0) {
+          this.drownTimer = 1
+          this.damage(2)
+        }
+      }
+    } else {
+      this.air = Math.min(10, this.air + dt * 4)
+      this.drownTimer = 1
+    }
+
+    if (this.hunger <= 0) {
+      this.hungerTimer -= dt
+      if (this.hungerTimer <= 0) {
+        this.hungerTimer = 4
+        this.damage(1)
+      }
+    } else {
+      this.hungerTimer = 4
+    }
+
+    if (this.hunger >= 18 && this.health < 20) {
+      this.regenTimer -= dt
+      if (this.regenTimer <= 0) {
+        this.regenTimer = 4
+        this.health = Math.min(20, this.health + 1)
+        this.addExhaustion(3)
+        this.onStatsChanged()
+      }
+    } else {
+      this.regenTimer = 4
+    }
   }
 
   private onGroundOrNear(): boolean {
     return this.collides(this.pos.x, this.pos.y - 0.15, this.pos.z) !== null
+  }
+
+  private tryGroundJump(): void {
+    if (
+      this.jumpBuffer <= 0 ||
+      this.flying ||
+      this.noclip ||
+      this.inWater ||
+      (!this.onGround && this.coyote <= 0)
+    ) return
+
+    this.vel.y = JUMP_V
+    this.onGround = false
+    this.coyote = 0
+    this.jumpBuffer = 0
+    this.audio.jump()
+    this.addExhaustion(this.sprinting ? 0.8 : 0.2)
   }
 
   private syncCamera(dt: number): void {
@@ -306,7 +470,12 @@ export class Player {
       this.pos.y + eye + bobY - dip,
       this.pos.z + bobX * -Math.sin(this.yaw)
     )
-    this.camera.rotation.set(this.pitch, this.yaw, Math.sin(this.bobPhase) * 0.006 * this.bobAmp)
+    const hurtRoll = Math.sin(this.hurtTime * Math.PI * 2) * this.hurtTime * 0.055
+    this.camera.rotation.set(
+      this.pitch + Math.sin(this.hurtTime * Math.PI) * 0.012,
+      this.yaw,
+      Math.sin(this.bobPhase) * 0.006 * this.bobAmp + hurtRoll
+    )
 
     // FOV kick while sprinting/flying fast
     const fovTarget = this.baseFov * (this.sprinting ? (this.flying ? 1.18 : 1.1) : 1)

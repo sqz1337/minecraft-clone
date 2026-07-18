@@ -1,5 +1,5 @@
 import { SimplexNoise, fbm2, ridged2 } from '../util/Noise'
-import { xmur3, hash01, hash2, clamp, lerp, smoothstep } from '../util/math'
+import { xmur3, hash01, hash2, mulberry32, clamp, lerp, smoothstep } from '../util/math'
 import { B } from './Blocks'
 import { Chunk, CHUNK_SIZE, WORLD_HEIGHT } from './Chunk'
 
@@ -35,6 +35,24 @@ interface TreeDef {
   height: number
   pine: boolean
 }
+
+interface OreDef {
+  id: number
+  minY: number
+  maxY: number
+  veinsPerChunk: number
+  minSize: number
+  maxSize: number
+  radiusScale: number
+  salt: number
+}
+
+const ORE_DEFS: OreDef[] = [
+  { id: B.COAL_ORE, minY: 5, maxY: 96, veinsPerChunk: 10, minSize: 8, maxSize: 16, radiusScale: 1, salt: 0x1c01 },
+  { id: B.IRON_ORE, minY: 5, maxY: 64, veinsPerChunk: 8, minSize: 5, maxSize: 10, radiusScale: 1, salt: 0x1a02 },
+  { id: B.GOLD_ORE, minY: 5, maxY: 32, veinsPerChunk: 2, minSize: 4, maxSize: 7, radiusScale: 0.8, salt: 0x601d },
+  { id: B.DIAMOND_ORE, minY: 5, maxY: 18, veinsPerChunk: 1, minSize: 3, maxSize: 6, radiusScale: 0.75, salt: 0xd1a0 }
+]
 
 export class WorldGen {
   readonly seedNum: number
@@ -218,6 +236,9 @@ export class WorldGen {
       }
     }
 
+    // Deterministic ore veins are stamped after caves so exposed cave walls reveal them.
+    this.stampOres(chunk)
+
     // stamp trees whose canopy may reach into this chunk
     for (let tx = bx - 3; tx < bx + CHUNK_SIZE + 3; tx++) {
       for (let tz = bz - 3; tz < bz + CHUNK_SIZE + 3; tz++) {
@@ -227,6 +248,71 @@ export class WorldGen {
     }
 
     chunk.state = 1
+  }
+
+  private stampOres(chunk: Chunk): void {
+    // Include neighboring source chunks so veins continue cleanly across chunk borders.
+    for (const ore of ORE_DEFS) {
+      for (let sourceCx = chunk.cx - 1; sourceCx <= chunk.cx + 1; sourceCx++) {
+        for (let sourceCz = chunk.cz - 1; sourceCz <= chunk.cz + 1; sourceCz++) {
+          for (let vein = 0; vein < ore.veinsPerChunk; vein++) {
+            const veinSeed = hash2(
+              sourceCx,
+              sourceCz,
+              this.seedNum ^ ore.salt ^ Math.imul(vein + 1, 0x9e3779b1)
+            )
+            const random = mulberry32(veinSeed)
+            let x = sourceCx * CHUNK_SIZE + random() * CHUNK_SIZE
+            let y = ore.minY + random() * (ore.maxY - ore.minY + 1)
+            let z = sourceCz * CHUNK_SIZE + random() * CHUNK_SIZE
+            const size = ore.minSize + Math.floor(random() * (ore.maxSize - ore.minSize + 1))
+
+            for (let step = 0; step < size; step++) {
+              const radius = (0.62 + random() * 0.68) * ore.radiusScale
+              this.stampOreSphere(chunk, ore.id, x, y, z, radius, ore.minY, ore.maxY)
+              x += (random() - 0.5) * 1.7
+              y = clamp(y + (random() - 0.5) * 1.15, ore.minY, ore.maxY)
+              z += (random() - 0.5) * 1.7
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private stampOreSphere(
+    chunk: Chunk,
+    oreId: number,
+    centerX: number,
+    centerY: number,
+    centerZ: number,
+    radius: number,
+    oreMinY: number,
+    oreMaxY: number
+  ): void {
+    const bx = chunk.cx * CHUNK_SIZE
+    const bz = chunk.cz * CHUNK_SIZE
+    const minX = Math.max(bx, Math.floor(centerX - radius))
+    const maxX = Math.min(bx + CHUNK_SIZE - 1, Math.floor(centerX + radius))
+    const minZ = Math.max(bz, Math.floor(centerZ - radius))
+    const maxZ = Math.min(bz + CHUNK_SIZE - 1, Math.floor(centerZ + radius))
+    const minY = Math.max(oreMinY, Math.floor(centerY - radius))
+    const maxY = Math.min(oreMaxY, Math.floor(centerY + radius))
+    if (minX > maxX || minZ > maxZ) return
+
+    const radiusSq = radius * radius
+    for (let wx = minX; wx <= maxX; wx++) {
+      for (let wz = minZ; wz <= maxZ; wz++) {
+        for (let y = minY; y <= maxY; y++) {
+          const dx = wx + 0.5 - centerX
+          const dy = y + 0.5 - centerY
+          const dz = wz + 0.5 - centerZ
+          if (dx * dx + dy * dy + dz * dz > radiusSq) continue
+          const index = Chunk.index(wx - bx, y, wz - bz)
+          if (chunk.blocks[index] === B.STONE) chunk.blocks[index] = oreId
+        }
+      }
+    }
   }
 
   private setInChunk(chunk: Chunk, wx: number, y: number, wz: number, id: number, replaceSolid = false): void {

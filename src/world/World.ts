@@ -1,7 +1,10 @@
 import * as THREE from 'three'
 import { Chunk, CHUNK_SIZE, WORLD_HEIGHT, ChunkState } from './Chunk'
 import { WorldGen } from './WorldGen'
-import { B, SOLID, CROSS } from './Blocks'
+import {
+  B, SOLID, CROSS, GRAVITY, isValidBlockId, isDirectionalBlock, isHorizontalFace,
+  type HorizontalFace
+} from './Blocks'
 import { buildChunkGeoms } from './Mesher'
 import type { Materials } from '../gfx/Materials'
 import type { Atlas } from '../gfx/Atlas'
@@ -12,6 +15,11 @@ export interface RayHit {
   id: number
   dist: number
 }
+
+/** Sparse chunk edits encoded as flat block-index/id pairs. */
+export type SerializedBlockEdits = Record<string, number[]>
+/** Sparse chunk facings encoded as flat block-index/horizontal-face pairs. */
+export type SerializedBlockFacings = Record<string, number[]>
 
 export class World {
   readonly gen: WorldGen
@@ -25,14 +33,29 @@ export class World {
   private meshQueue: Chunk[] = []
   private lastCenter = { cx: NaN, cz: NaN }
   private queuesDirty = true
+  private blockEdits = new Map<string, Map<number, number>>()
+  private blockFacings = new Map<string, Map<number, HorizontalFace>>()
+  private editsDirty = false
+  private xrayEnabled = false
 
-  constructor(gen: WorldGen, scene: THREE.Scene, materials: Materials, atlas: Atlas, renderDistance: number, grassDensity: number) {
+  constructor(
+    gen: WorldGen,
+    scene: THREE.Scene,
+    materials: Materials,
+    atlas: Atlas,
+    renderDistance: number,
+    grassDensity: number,
+    savedEdits: SerializedBlockEdits = {},
+    savedFacings: SerializedBlockFacings = {}
+  ) {
     this.gen = gen
     this.scene = scene
     this.materials = materials
     this.atlas = atlas
     this.renderDistance = renderDistance
     this.grassDensity = grassDensity
+    this.importBlockEdits(savedEdits)
+    this.importBlockFacings(savedFacings)
   }
 
   private key(cx: number, cz: number): string { return cx + ',' + cz }
@@ -52,12 +75,50 @@ export class World {
 
   chunkCount(): number { return this.chunks.size }
 
+  hasUnsavedBlockEdits(): boolean { return this.editsDirty }
+
+  markBlockEditsSaved(): void { this.editsDirty = false }
+
+  setXrayEnabled(enabled: boolean): void {
+    this.xrayEnabled = enabled
+    for (const chunk of this.chunks.values()) {
+      if (chunk.meshes.xray) chunk.meshes.xray.visible = enabled
+    }
+  }
+
+  serializeBlockEdits(): SerializedBlockEdits {
+    const serialized: SerializedBlockEdits = {}
+    for (const [chunkKey, edits] of this.blockEdits) {
+      const pairs: number[] = []
+      for (const [index, id] of [...edits].sort((a, b) => a[0] - b[0])) pairs.push(index, id)
+      if (pairs.length > 0) serialized[chunkKey] = pairs
+    }
+    return serialized
+  }
+
+  serializeBlockFacings(): SerializedBlockFacings {
+    const serialized: SerializedBlockFacings = {}
+    for (const [chunkKey, facings] of this.blockFacings) {
+      const pairs: number[] = []
+      for (const [index, face] of [...facings].sort((a, b) => a[0] - b[0])) pairs.push(index, face)
+      if (pairs.length > 0) serialized[chunkKey] = pairs
+    }
+    return serialized
+  }
+
   getBlock(x: number, y: number, z: number): number {
     if (y < 0 || y >= WORLD_HEIGHT) return B.AIR
     const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
     const c = this.chunks.get(this.key(cx, cz))
     if (!c || c.state < ChunkState.GENERATED) return B.AIR
     return c.get(x - cx * CHUNK_SIZE, y, z - cz * CHUNK_SIZE)
+  }
+
+  getBlockFacing(x: number, y: number, z: number): HorizontalFace {
+    if (y < 0 || y >= WORLD_HEIGHT) return 4
+    const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
+    const lx = x - cx * CHUNK_SIZE, lz = z - cz * CHUNK_SIZE
+    return this.blockFacings.get(this.key(cx, cz))?.get(Chunk.index(lx, y, lz)) ?? 4
   }
 
   isSolid(x: number, y: number, z: number): boolean {
@@ -69,17 +130,34 @@ export class World {
     return this.getBlock(x, y, z) === B.WATER
   }
 
-  setBlock(x: number, y: number, z: number, id: number): void {
-    if (y < 1 || y >= WORLD_HEIGHT) return
+  setBlock(x: number, y: number, z: number, id: number, facing?: HorizontalFace): void {
+    if (y < 1 || y >= WORLD_HEIGHT || !isValidBlockId(id)) return
     const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
     const c = this.chunks.get(this.key(cx, cz))
     if (!c || c.state < ChunkState.GENERATED) return
     const lx = x - cx * CHUNK_SIZE, lz = z - cz * CHUNK_SIZE
-    c.set(lx, y, lz, id)
-    // breaking a support pops the decoration above it
-    if (id === B.AIR && y + 1 < WORLD_HEIGHT && CROSS[c.get(lx, y + 1, lz)]) {
-      c.set(lx, y + 1, lz, B.AIR)
+    const index = Chunk.index(lx, y, lz)
+    const previousId = c.get(lx, y, lz)
+    const previousFacing = this.blockFacings.get(this.key(cx, cz))?.get(index) ?? 4
+    const nextFacing = isDirectionalBlock(id)
+      ? (facing ?? (isDirectionalBlock(previousId) ? previousFacing : 4))
+      : null
+    const facingChanged = nextFacing !== (isDirectionalBlock(previousId) ? previousFacing : null)
+    const blockChanged = previousId !== id
+    if (!blockChanged && !facingChanged) return
+
+    if (blockChanged) {
+      c.set(lx, y, lz, id)
+      this.recordBlockEdit(c, index, id)
+      // breaking a support pops the decoration above it
+      if (id === B.AIR && y + 1 < WORLD_HEIGHT && CROSS[c.get(lx, y + 1, lz)]) {
+        c.set(lx, y + 1, lz, B.AIR)
+        this.recordBlockEdit(c, Chunk.index(lx, y + 1, lz), B.AIR)
+      }
+      if (id === B.AIR) this.settleFallingColumn(c, lx, y + 1, lz)
+      else if (GRAVITY[id]) this.settleFallingColumn(c, lx, y, lz)
     }
+    this.recordBlockFacing(c, index, nextFacing)
     this.remeshChunk(c)
     if (lx === 0) this.remeshAt(cx - 1, cz)
     if (lx === CHUNK_SIZE - 1) this.remeshAt(cx + 1, cz)
@@ -89,6 +167,12 @@ export class World {
     if (lx === 0 && lz === CHUNK_SIZE - 1) this.remeshAt(cx - 1, cz + 1)
     if (lx === CHUNK_SIZE - 1 && lz === 0) this.remeshAt(cx + 1, cz - 1)
     if (lx === CHUNK_SIZE - 1 && lz === CHUNK_SIZE - 1) this.remeshAt(cx + 1, cz + 1)
+  }
+
+  setBlockFacing(x: number, y: number, z: number, facing: HorizontalFace): void {
+    const id = this.getBlock(x, y, z)
+    if (!isDirectionalBlock(id)) return
+    this.setBlock(x, y, z, id, facing)
   }
 
   private remeshAt(cx: number, cz: number): void {
@@ -174,7 +258,7 @@ export class World {
 
     for (const [cx, cz] of genList) {
       const c = this.ensureChunk(cx, cz)
-      if (c.state < ChunkState.GENERATED) this.gen.fillChunk(c)
+      if (c.state < ChunkState.GENERATED) this.generateChunk(c)
       done++
       await maybeYield()
     }
@@ -202,7 +286,7 @@ export class World {
     while (performance.now() - t0 < budgetMs) {
       const genC = this.genQueue.pop()
       if (genC) {
-        if (genC.state < ChunkState.GENERATED) this.gen.fillChunk(genC)
+        if (genC.state < ChunkState.GENERATED) this.generateChunk(genC)
         continue
       }
       const meshC = this.meshQueue.pop()
@@ -257,6 +341,92 @@ export class World {
     }
   }
 
+  private generateChunk(chunk: Chunk): void {
+    this.gen.fillChunk(chunk)
+    const edits = this.blockEdits.get(this.key(chunk.cx, chunk.cz))
+    if (!edits) return
+    for (const [index, id] of edits) chunk.blocks[index] = id
+  }
+
+  private importBlockEdits(serialized: SerializedBlockEdits): void {
+    const maxIndex = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT
+    for (const [chunkKey, pairs] of Object.entries(serialized)) {
+      if (!/^-?\d+,-?\d+$/.test(chunkKey) || !Array.isArray(pairs)) continue
+      const edits = new Map<number, number>()
+      for (let i = 0; i + 1 < pairs.length; i += 2) {
+        const index = pairs[i]
+        const id = pairs[i + 1]
+        if (!Number.isInteger(index) || index < 0 || index >= maxIndex || !isValidBlockId(id)) continue
+        edits.set(index, id)
+      }
+      if (edits.size > 0) this.blockEdits.set(chunkKey, edits)
+    }
+  }
+
+  private importBlockFacings(serialized: SerializedBlockFacings): void {
+    const maxIndex = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT
+    for (const [chunkKey, pairs] of Object.entries(serialized)) {
+      if (!/^-?\d+,-?\d+$/.test(chunkKey) || !Array.isArray(pairs)) continue
+      const facings = new Map<number, HorizontalFace>()
+      for (let i = 0; i + 1 < pairs.length; i += 2) {
+        const index = pairs[i]
+        const face = pairs[i + 1]
+        if (!Number.isInteger(index) || index < 0 || index >= maxIndex || !isHorizontalFace(face) || face === 4) continue
+        facings.set(index, face)
+      }
+      if (facings.size > 0) this.blockFacings.set(chunkKey, facings)
+    }
+  }
+
+  private recordBlockEdit(chunk: Chunk, index: number, id: number): void {
+    const chunkKey = this.key(chunk.cx, chunk.cz)
+    let edits = this.blockEdits.get(chunkKey)
+    if (!edits) {
+      edits = new Map()
+      this.blockEdits.set(chunkKey, edits)
+    }
+    edits.set(index, id)
+    this.editsDirty = true
+  }
+
+  private recordBlockFacing(chunk: Chunk, index: number, facing: HorizontalFace | null): void {
+    const chunkKey = this.key(chunk.cx, chunk.cz)
+    let facings = this.blockFacings.get(chunkKey)
+    if (facing === null || facing === 4) {
+      if (!facings?.delete(index)) return
+      if (facings.size === 0) this.blockFacings.delete(chunkKey)
+    } else {
+      if (!facings) {
+        facings = new Map()
+        this.blockFacings.set(chunkKey, facings)
+      }
+      if (facings.get(index) === facing) return
+      facings.set(index, facing)
+    }
+    this.editsDirty = true
+  }
+
+  private settleFallingColumn(chunk: Chunk, lx: number, startY: number, lz: number): void {
+    const replaceable = (id: number) => id === B.AIR || id === B.WATER || CROSS[id]
+    let sourceY = startY
+    while (sourceY < WORLD_HEIGHT && replaceable(chunk.get(lx, sourceY, lz))) sourceY++
+
+    while (sourceY < WORLD_HEIGHT) {
+      const id = chunk.get(lx, sourceY, lz)
+      if (!GRAVITY[id]) break
+
+      let targetY = sourceY
+      while (targetY > 1 && replaceable(chunk.get(lx, targetY - 1, lz))) targetY--
+      if (targetY === sourceY) break
+
+      chunk.set(lx, sourceY, lz, B.AIR)
+      this.recordBlockEdit(chunk, Chunk.index(lx, sourceY, lz), B.AIR)
+      chunk.set(lx, targetY, lz, id)
+      this.recordBlockEdit(chunk, Chunk.index(lx, targetY, lz), id)
+      sourceY++
+    }
+  }
+
   remeshChunk(chunk: Chunk): void {
     this.disposeChunkMeshes(chunk)
     const geoms = buildChunkGeoms(this, chunk, this.atlas, this.grassDensity)
@@ -284,11 +454,58 @@ export class World {
       this.scene.add(m)
       chunk.meshes.water = m
     }
+    if (geoms.glass) {
+      const m = new THREE.Mesh(geoms.glass, this.materials.glass)
+      m.renderOrder = 3
+      m.matrixAutoUpdate = false
+      this.scene.add(m)
+      chunk.meshes.glass = m
+    }
+    if (geoms.emissive) {
+      const m = new THREE.Mesh(geoms.emissive, this.materials.emissive)
+      m.renderOrder = 4
+      m.matrixAutoUpdate = false
+      this.scene.add(m)
+      chunk.meshes.emissive = m
+    }
+    if (geoms.furnaceFire) {
+      const m = new THREE.Mesh(geoms.furnaceFire, this.materials.furnaceFire)
+      m.renderOrder = 4
+      m.matrixAutoUpdate = false
+      this.scene.add(m)
+      chunk.meshes.furnaceFire = m
+    }
+    if (geoms.chest) {
+      const m = new THREE.Mesh(geoms.chest, this.materials.chest)
+      m.castShadow = true
+      m.receiveShadow = true
+      m.matrixAutoUpdate = false
+      this.scene.add(m)
+      chunk.meshes.chest = m
+    }
+    if (geoms.largeChest) {
+      const m = new THREE.Mesh(geoms.largeChest, this.materials.largeChest)
+      m.castShadow = true
+      m.receiveShadow = true
+      m.matrixAutoUpdate = false
+      this.scene.add(m)
+      chunk.meshes.largeChest = m
+    }
+    if (geoms.xray) {
+      const m = new THREE.Mesh(geoms.xray, this.materials.xrayOre)
+      m.visible = this.xrayEnabled
+      m.renderOrder = 20
+      m.matrixAutoUpdate = false
+      this.scene.add(m)
+      chunk.meshes.xray = m
+    }
     chunk.state = ChunkState.MESHED
   }
 
   private disposeChunkMeshes(chunk: Chunk): void {
-    for (const kind of ['solid', 'foliage', 'water'] as const) {
+    for (const kind of [
+      'solid', 'foliage', 'water', 'glass', 'emissive', 'furnaceFire', 'chest', 'largeChest', 'xray'
+    ] as const) {
       const m = chunk.meshes[kind]
       if (m) {
         this.scene.remove(m)

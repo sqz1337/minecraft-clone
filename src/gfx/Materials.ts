@@ -15,6 +15,12 @@ export class Materials {
   solid: THREE.MeshStandardMaterial
   foliage: THREE.MeshStandardMaterial
   foliageDepth: THREE.MeshDepthMaterial
+  glass: THREE.MeshStandardMaterial
+  emissive: THREE.MeshBasicMaterial
+  furnaceFire: THREE.MeshBasicMaterial
+  chest: THREE.MeshStandardMaterial
+  largeChest: THREE.MeshStandardMaterial
+  xrayOre: THREE.MeshBasicMaterial
   water: THREE.ShaderMaterial
 
   constructor(atlas: Atlas) {
@@ -41,6 +47,70 @@ export class Materials {
       alphaTest: 0.42
     })
     this.injectWind(this.foliageDepth)
+
+    this.glass = new THREE.MeshStandardMaterial({
+      map: atlas.colorTex,
+      roughness: 0.18,
+      metalness: 0,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.58,
+      alphaTest: 0.08,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    })
+
+    this.emissive = new THREE.MeshBasicMaterial({
+      map: atlas.colorTex,
+      vertexColors: true,
+      alphaTest: 0.2,
+      side: THREE.DoubleSide,
+      toneMapped: false
+    })
+
+    this.furnaceFire = new THREE.MeshBasicMaterial({
+      map: atlas.colorTex,
+      vertexColors: true
+    })
+    this.furnaceFire.onBeforeCompile = (shader) => {
+      shader.uniforms.uFurnaceTime = U.uTime
+      shader.fragmentShader = 'uniform float uFurnaceTime;\n' + shader.fragmentShader.replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+        float furnaceFireMask = smoothstep(0.08, 0.42, diffuseColor.r - diffuseColor.b)
+          * smoothstep(0.18, 0.7, diffuseColor.r);
+        float furnaceFlicker = 0.88
+          + 0.1 * sin(uFurnaceTime * 9.0)
+          + 0.06 * sin(uFurnaceTime * 17.0 + 1.7);
+        diffuseColor.rgb = mix(
+          diffuseColor.rgb,
+          diffuseColor.rgb * furnaceFlicker + vec3(0.12, 0.035, 0.0),
+          furnaceFireMask
+        );`
+      )
+    }
+    this.furnaceFire.customProgramCacheKey = () => 'furnace-fire-v1'
+
+    this.chest = new THREE.MeshStandardMaterial({
+      map: atlas.chestTex,
+      roughness: 0.92,
+      metalness: 0
+    })
+    this.largeChest = new THREE.MeshStandardMaterial({
+      map: atlas.largeChestTex,
+      roughness: 0.92,
+      metalness: 0
+    })
+
+    this.xrayOre = new THREE.MeshBasicMaterial({
+      map: atlas.colorTex,
+      vertexColors: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+      toneMapped: false
+    })
 
     this.water = new THREE.ShaderMaterial({
       transparent: true,
@@ -125,6 +195,13 @@ export class Materials {
         }
       `
     })
+  }
+
+  setXray(enabled: boolean): void {
+    this.solid.transparent = enabled
+    this.solid.opacity = enabled ? 0.1 : 1
+    this.solid.depthWrite = !enabled
+    this.solid.needsUpdate = true
   }
 
   private injectWind(mat: THREE.Material): void {

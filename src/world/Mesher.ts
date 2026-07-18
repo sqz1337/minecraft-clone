@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { B, OPAQUE, CROSS, tileFor } from './Blocks'
+import { B, OPAQUE, CROSS, ORE, tileFor, type HorizontalFace } from './Blocks'
 import { Chunk, CHUNK_SIZE, WORLD_HEIGHT } from './Chunk'
 import { GRASS_TINT } from './WorldGen'
 import { hash301, hash01 } from '../util/math'
@@ -10,6 +10,12 @@ export interface ChunkGeoms {
   solid: THREE.BufferGeometry | null
   foliage: THREE.BufferGeometry | null
   water: THREE.BufferGeometry | null
+  glass: THREE.BufferGeometry | null
+  emissive: THREE.BufferGeometry | null
+  furnaceFire: THREE.BufferGeometry | null
+  chest: THREE.BufferGeometry | null
+  largeChest: THREE.BufferGeometry | null
+  xray: THREE.BufferGeometry | null
 }
 
 interface FaceDef {
@@ -130,6 +136,12 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
 
   const solid = new GeomBuilder()
   const foliage = new GeomBuilder()
+  const glass = new GeomBuilder()
+  const emissive = new GeomBuilder()
+  const furnaceFire = new GeomBuilder()
+  const chest = new TexturedBoxBuilder()
+  const largeChest = new TexturedBoxBuilder()
+  const xray = new GeomBuilder()
   const water = new WaterBuilder()
   const blocks = chunk.blocks
 
@@ -144,6 +156,46 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
       for (let y = 0; y < WORLD_HEIGHT; y++) {
         const id = blocks[colBase | y]
         if (id === B.AIR) continue
+
+        if (id === B.CHEST) {
+          const neighbors = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
+          const pair = neighbors.find(([dx, dz]) => sample(wx + dx, y, wz + dz) === B.CHEST)
+          let facing = world.getBlockFacing(wx, y, wz)
+          if (!pair) {
+            addChestModel(chest, wx + 0.5, y, wz + 0.5, facing, false)
+          } else {
+            const [dx, dz] = pair
+            const nx = wx + dx, nz = wz + dz
+            const canonical = wx < nx || (wx === nx && wz < nz)
+            if (canonical) {
+              // Old saves had no facing metadata. Pick a valid perpendicular
+              // default if such a chest pair straddles the old format.
+              if (dx !== 0 && (facing === 0 || facing === 1)) facing = 4
+              if (dz !== 0 && (facing === 4 || facing === 5)) facing = 0
+              addChestModel(largeChest, (wx + nx + 1) / 2, y, (wz + nz + 1) / 2, facing, true)
+            }
+          }
+          continue
+        }
+
+        if (ORE[id]) {
+          for (let f = 0; f < 6; f++) {
+            const fd = FACES[f]
+            const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, f))
+            for (let ci = 0; ci < 4; ci++) {
+              const cc = fd.c[ci]
+              const uv = fd.uv[ci]
+              xray.vertex(
+                wx + cc[0], y + cc[1], wz + cc[2],
+                fd.n[0], fd.n[1], fd.n[2],
+                uv[0] === 0 ? u0 : u1,
+                uv[1] === 0 ? v0 : v1,
+                1, 1, 1, 0
+              )
+            }
+            xray.quad(false)
+          }
+        }
 
         if (id === B.WATER) {
           const above = sample(wx, y + 1, wz)
@@ -189,29 +241,33 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
             [x0, z0, x1, z1],
             [x0, z1, x1, z0]
           ]
+          const crossTarget = id === B.TORCH ? emissive : foliage
           for (const [qx0, qz0, qx1, qz1] of quads) {
-            foliage.vertex(qx0, y, qz0, 0, 1, 0, u0, v0, r * 0.85, g * 0.85, bcol * 0.85, 0)
-            foliage.vertex(qx1, y, qz1, 0, 1, 0, u1, v0, r * 0.85, g * 0.85, bcol * 0.85, 0)
-            foliage.vertex(qx0, y + 1, qz0, 0, 1, 0, u0, v1, r, g, bcol, 1)
-            foliage.vertex(qx1, y + 1, qz1, 0, 1, 0, u1, v1, r, g, bcol, 1)
-            foliage.quad(false)
+            crossTarget.vertex(qx0, y, qz0, 0, 1, 0, u0, v0, r * 0.85, g * 0.85, bcol * 0.85, 0)
+            crossTarget.vertex(qx1, y, qz1, 0, 1, 0, u1, v0, r * 0.85, g * 0.85, bcol * 0.85, 0)
+            crossTarget.vertex(qx0, y + 1, qz0, 0, 1, 0, u0, v1, r, g, bcol, id === B.TORCH ? 0 : 1)
+            crossTarget.vertex(qx1, y + 1, qz1, 0, 1, 0, u1, v1, r, g, bcol, id === B.TORCH ? 0 : 1)
+            crossTarget.quad(false)
           }
           continue
         }
 
         const isLeaf = id === B.LEAVES || id === B.PINELEAVES
-        const target = isLeaf ? foliage : solid
+        const target = isLeaf ? foliage : id === B.GLASS ? glass : solid
+        const facing = world.getBlockFacing(wx, y, wz)
         // subtle per-block value variation breaks up flat regions
         const vary = 0.92 + hash301(wx, y, wz, seed ^ 0xc0de) * 0.14
 
         for (let f = 0; f < 6; f++) {
           const fd = FACES[f]
           const nb = sample(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
+          if (id === B.GLASS && nb === B.GLASS) continue
           if (OPAQUE[nb]) continue
           if (isLeaf && nb === id) continue
 
-          const tile = tileFor(id, f)
+          const tile = tileFor(id, f, facing)
           const [u0, v0, u1, v1] = atlas.uvRect(tile)
+          const faceTarget = id === B.FURNACE_LIT && f === facing ? furnaceFire : target
 
           let tr = vary, tg = vary, tb = vary
           if (id === B.GRASS && f === 2) {
@@ -252,7 +308,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           for (let ci = 0; ci < 4; ci++) {
             const cc = fd.c[ci]
             const shade = AO_CURVE[ao[ci]]
-            target.vertex(
+            faceTarget.vertex(
               wx + cc[0], y + cc[1], wz + cc[2],
               nx, ny, nz,
               uvs[ci][0] === 0 ? u0 : u1,
@@ -262,7 +318,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
             )
           }
           // flip the quad diagonal for smoother AO interpolation
-          target.quad(ao[0] + ao[3] > ao[1] + ao[2])
+          faceTarget.quad(ao[0] + ao[3] > ao[1] + ao[2])
         }
       }
     }
@@ -271,6 +327,137 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
   return {
     solid: solid.build(false),
     foliage: foliage.build(true),
-    water: water.build()
+    water: water.build(),
+    glass: glass.build(false),
+    emissive: emissive.build(false),
+    furnaceFire: furnaceFire.build(false),
+    chest: chest.build(),
+    largeChest: largeChest.build(),
+    xray: xray.build(false)
   }
+}
+
+type PixelRect = readonly [x: number, y: number, width: number, height: number]
+
+/** Minecraft-style cuboid UV unwrap used by the old chest entity textures. */
+class TexturedBoxBuilder {
+  private pos: number[] = []
+  private nrm: number[] = []
+  private uv: number[] = []
+  private idx: number[] = []
+  private vcount = 0
+
+  private rotate(x: number, z: number, facing: HorizontalFace): [number, number] {
+    if (facing === 5) return [-x, -z]
+    if (facing === 0) return [z, -x]
+    if (facing === 1) return [-z, x]
+    return [x, z]
+  }
+
+  private quad(
+    centerX: number,
+    centerZ: number,
+    facing: HorizontalFace,
+    corners: readonly (readonly [number, number, number])[],
+    normal: readonly [number, number, number],
+    faceUvs: readonly (readonly [number, number])[],
+    rect: PixelRect,
+    textureWidth: number,
+    textureHeight: number
+  ): void {
+    const [rx, rz] = this.rotate(normal[0], normal[2], facing)
+    const [px, py, pw, ph] = rect
+    const u0 = px / textureWidth, u1 = (px + pw) / textureWidth
+    const v0 = 1 - (py + ph) / textureHeight, v1 = 1 - py / textureHeight
+    for (let i = 0; i < 4; i++) {
+      const [lx, ly, lz] = corners[i]
+      const [x, z] = this.rotate(lx, lz, facing)
+      const uv = faceUvs[i]
+      this.pos.push(centerX + x, ly, centerZ + z)
+      this.nrm.push(rx, normal[1], rz)
+      this.uv.push(uv[0] === 0 ? u0 : u1, uv[1] === 0 ? v0 : v1)
+      this.vcount++
+    }
+    const a = this.vcount - 4
+    this.idx.push(a, a + 1, a + 2, a + 2, a + 1, a + 3)
+  }
+
+  box(
+    centerX: number,
+    y0: number,
+    centerZ: number,
+    widthPx: number,
+    heightPx: number,
+    depthPx: number,
+    textureX: number,
+    textureY: number,
+    textureWidth: number,
+    facing: HorizontalFace
+  ): void {
+    const x0 = -widthPx / 32, x1 = widthPx / 32
+    const z0 = -depthPx / 32, z1 = depthPx / 32
+    const y1 = y0 + heightPx / 16
+    const u = textureX, v = textureY, dx = widthPx, dy = heightPx, dz = depthPx
+    const f1 = u + dz, f2 = f1 + dx, f3 = f2 + dx, f4 = f2 + dz
+    const vertical = v + dz
+    const rects: PixelRect[] = [
+      [f2, vertical, dz, dy],
+      [u, vertical, dz, dy],
+      [f2, v, f3 - f2, dz],
+      [f1, v, f2 - f1, dz],
+      [f4, vertical, dx, dy],
+      [f1, vertical, dx, dy]
+    ]
+    const corners = [
+      [[x1, y0, z1], [x1, y0, z0], [x1, y1, z1], [x1, y1, z0]],
+      [[x0, y0, z0], [x0, y0, z1], [x0, y1, z0], [x0, y1, z1]],
+      [[x0, y1, z0], [x0, y1, z1], [x1, y1, z0], [x1, y1, z1]],
+      [[x0, y0, z1], [x0, y0, z0], [x1, y0, z1], [x1, y0, z0]],
+      [[x0, y0, z1], [x1, y0, z1], [x0, y1, z1], [x1, y1, z1]],
+      [[x1, y0, z0], [x0, y0, z0], [x1, y1, z0], [x0, y1, z0]]
+    ] as const
+    for (let face = 0; face < 6; face++) {
+      this.quad(centerX, centerZ, facing, corners[face], FACES[face].n, FACES[face].uv, rects[face], textureWidth, 64)
+    }
+  }
+
+  build(): THREE.BufferGeometry | null {
+    if (this.vcount === 0) return null
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3))
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(this.nrm, 3))
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2))
+    geometry.setIndex(this.idx)
+    geometry.computeBoundingSphere()
+    return geometry
+  }
+}
+
+function offsetCenter(
+  centerX: number,
+  centerZ: number,
+  localX: number,
+  localZ: number,
+  facing: HorizontalFace
+): [number, number] {
+  if (facing === 5) return [centerX - localX, centerZ - localZ]
+  if (facing === 0) return [centerX + localZ, centerZ - localX]
+  if (facing === 1) return [centerX - localZ, centerZ + localX]
+  return [centerX + localX, centerZ + localZ]
+}
+
+function addChestModel(
+  builder: TexturedBoxBuilder,
+  centerX: number,
+  y: number,
+  centerZ: number,
+  facing: HorizontalFace,
+  large: boolean
+): void {
+  const width = large ? 30 : 14
+  const textureWidth = large ? 128 : 64
+  builder.box(centerX, y, centerZ, width, 10, 14, 0, 19, textureWidth, facing)
+  builder.box(centerX, y + 10 / 16, centerZ, width, 5, 14, 0, 0, textureWidth, facing)
+  const [latchX, latchZ] = offsetCenter(centerX, centerZ, 0, 15 / 32, facing)
+  builder.box(latchX, y + 7 / 16, latchZ, 2, 4, 1, 0, 0, textureWidth, facing)
 }

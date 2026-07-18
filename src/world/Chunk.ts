@@ -10,6 +10,12 @@ export interface ChunkMeshes {
   solid: THREE.Mesh | null
   foliage: THREE.Mesh | null
   water: THREE.Mesh | null
+  glass: THREE.Mesh | null
+  emissive: THREE.Mesh | null
+  furnaceFire: THREE.Mesh | null
+  chest: THREE.Mesh | null
+  largeChest: THREE.Mesh | null
+  xray: THREE.Mesh | null
 }
 
 export class Chunk {
@@ -20,7 +26,17 @@ export class Chunk {
   colBiome = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE)
   colHeight = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE)
   state: ChunkStateT = ChunkState.EMPTY
-  meshes: ChunkMeshes = { solid: null, foliage: null, water: null }
+  meshes: ChunkMeshes = {
+    solid: null,
+    foliage: null,
+    water: null,
+    glass: null,
+    emissive: null,
+    furnaceFire: null,
+    chest: null,
+    largeChest: null,
+    xray: null
+  }
 
   constructor(cx: number, cz: number) {
     this.cx = cx

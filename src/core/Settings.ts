@@ -1,4 +1,5 @@
 export type QualityName = 'low' | 'medium' | 'high' | 'ultra'
+export type GameMode = 'creative' | 'survival'
 
 export interface QualityPreset {
   renderDistance: number
@@ -22,6 +23,8 @@ export class Settings {
   volume = 0.8
   headBob = true
   renderDistanceOverride: number | null = null
+  lastSeed = ''
+  lastGameMode: GameMode = 'survival'
 
   get preset(): QualityPreset { return QUALITIES[this.quality] }
   get renderDistance(): number { return this.renderDistanceOverride ?? this.preset.renderDistance }
@@ -36,6 +39,8 @@ export class Settings {
       if (typeof data.headBob === 'boolean') this.headBob = data.headBob
       if (typeof data.renderDistanceOverride === 'number') this.renderDistanceOverride = data.renderDistanceOverride
       if (data.renderDistanceOverride === null) this.renderDistanceOverride = null
+      if (typeof data.lastSeed === 'string') this.lastSeed = data.lastSeed.slice(0, 200)
+      if (data.lastGameMode === 'creative' || data.lastGameMode === 'survival') this.lastGameMode = data.lastGameMode
     } catch { /* corrupted storage — use defaults */ }
   }
 
@@ -45,7 +50,9 @@ export class Settings {
         quality: this.quality,
         volume: this.volume,
         headBob: this.headBob,
-        renderDistanceOverride: this.renderDistanceOverride
+        renderDistanceOverride: this.renderDistanceOverride,
+        lastSeed: this.lastSeed,
+        lastGameMode: this.lastGameMode
       }))
     } catch { /* private mode etc. */ }
   }

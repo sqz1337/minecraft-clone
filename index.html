@@ -28,6 +28,13 @@
             <option value="ultra">Ultra</option>
           </select>
         </label>
+        <label class="field">
+          <span>Game Mode</span>
+          <select id="game-mode-select">
+            <option value="survival" selected>Survival</option>
+            <option value="creative">Creative</option>
+          </select>
+        </label>
         <button id="btn-enter" class="btn btn-primary">Enter World</button>
         <button id="btn-title-controls" class="btn">Controls</button>
       </div>
@@ -88,10 +95,15 @@
         <b>Shift</b><span>Sprint</span>
         <b>C / Ctrl</b><span>Crouch / Fly down</span>
         <b>Left Click</b><span>Break block (hold)</span>
-        <b>Right Click</b><span>Place block</span>
+        <b>Right Click</b><span>Place block / use crafting table</span>
         <b>Wheel / 1–9</b><span>Select block</span>
+        <b>E</b><span>Open inventory (Survival)</span>
+        <b>O</b><span>Admin item panel (temporary)</span>
+        <b>Q</b><span>Drop selected item</span>
         <b>F</b><span>Flashlight</span>
         <b>G</b><span>Toggle flight</span>
+        <b>R</b><span>Cycle hotbar page</span>
+        <b>X</b><span>Ore xray + noclip</span>
         <b>T</b><span>Fast-forward time</span>
         <b>Y</b><span>Cycle weather</span>
         <b>Esc</b><span>Pause</span>
@@ -100,17 +112,74 @@
     </div>
   </div>
 
+  <!-- Survival inventory + crafting table -->
+  <div id="inventory-screen" class="screen hidden translucent">
+    <div id="inventory-window" class="inventory-window" role="dialog" aria-label="Inventory">
+      <div class="inventory-title"></div>
+      <div class="inventory-crafting-title"></div>
+      <div id="inventory-craft" class="inventory-grid inventory-craft"></div>
+      <div id="inventory-result" class="craft-result inventory-result"></div>
+      <div id="inventory-main" class="inventory-grid inventory-main"></div>
+      <div id="inventory-hotbar" class="inventory-grid inventory-hotbar"></div>
+    </div>
+    <div id="workbench-window" class="workbench-window hidden" role="dialog" aria-label="Crafting Table">
+      <div class="workbench-title"></div>
+      <div id="workbench-craft" class="inventory-grid workbench-craft"></div>
+      <div id="workbench-result" class="craft-result workbench-result"></div>
+      <div id="workbench-main" class="inventory-grid inventory-main"></div>
+      <div id="workbench-hotbar" class="inventory-grid inventory-hotbar"></div>
+      <button id="recipe-toggle" class="recipe-toggle" title="Recipe book" type="button"></button>
+      <div id="recipe-book" class="mc-panel recipe-book hidden">
+        <div class="recipe-book-title"></div>
+        <div id="recipe-grid" class="mc-slot-grid recipe-grid"></div>
+      </div>
+    </div>
+    <div id="furnace-window" class="furnace-window hidden" role="dialog" aria-label="Furnace">
+      <div class="furnace-title"></div>
+      <div class="furnace-inventory-title"></div>
+      <div id="furnace-flame"></div>
+      <div id="furnace-arrow"></div>
+      <div id="furnace-input" class="furnace-slot furnace-input"></div>
+      <div id="furnace-fuel" class="furnace-slot furnace-fuel"></div>
+      <div id="furnace-output" class="furnace-slot furnace-output"></div>
+      <div id="furnace-main" class="inventory-grid inventory-main"></div>
+      <div id="furnace-hotbar" class="inventory-grid inventory-hotbar"></div>
+    </div>
+    <div id="chest-window" class="chest-window hidden" role="dialog" aria-label="Chest">
+      <div class="chest-bg-top"></div>
+      <div class="chest-bg-bottom"></div>
+      <div class="chest-title"></div>
+      <div class="chest-inventory-title"></div>
+      <div id="chest-grid" class="inventory-grid chest-grid"></div>
+      <div id="chest-main" class="inventory-grid chest-main"></div>
+      <div id="chest-hotbar" class="inventory-grid chest-hotbar"></div>
+    </div>
+    <div id="admin-window" class="mc-panel admin-window hidden" role="dialog" aria-label="Admin items">
+      <div class="admin-title"></div>
+      <div id="admin-grid" class="mc-slot-grid admin-grid"></div>
+      <div class="admin-hint"></div>
+    </div>
+    <div id="inventory-cursor"></div>
+  </div>
+
   <!-- HUD -->
   <div id="hud" class="hidden">
     <div id="crosshair"></div>
     <div id="info"></div>
     <div id="hotbar-wrap">
+      <div id="survival-stats" class="hidden">
+        <div id="health-bar" class="status-row"></div>
+        <div id="air-bar" class="air-meter hidden"></div>
+        <div id="hunger-bar" class="status-row"></div>
+      </div>
+      <div id="experience-bar" class="hidden"><div id="experience-fill"></div></div>
       <div id="block-name"></div>
       <div id="hotbar"></div>
     </div>
   </div>
 
   <div id="underwater-overlay"></div>
+  <div id="damage-overlay"></div>
   <div id="vignette"></div>
   <div id="toast" class="hidden"></div>
 

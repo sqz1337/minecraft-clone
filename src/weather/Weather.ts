@@ -5,6 +5,13 @@ import type { AudioMan } from '../audio/Audio'
 
 export type WeatherKind = 'clear' | 'cloudy' | 'rain' | 'storm'
 
+export interface WeatherState {
+  kind: WeatherKind
+  nextChange: number
+  lightningTimer: number
+  out: WeatherOut
+}
+
 const KINDS: WeatherKind[] = ['clear', 'cloudy', 'rain', 'storm']
 
 interface Targets {
@@ -37,6 +44,35 @@ export class Weather {
     if (this.kind === 'rain' && cold) return 'Snow'
     if (this.kind === 'storm' && cold) return 'Blizzard'
     return this.kind.charAt(0).toUpperCase() + this.kind.slice(1)
+  }
+
+  snapshot(): WeatherState {
+    return {
+      kind: this.kind,
+      nextChange: this.nextChange,
+      lightningTimer: this.lightningTimer,
+      out: { ...this.out }
+    }
+  }
+
+  restore(state: WeatherState): void {
+    if (!KINDS.includes(state.kind)) return
+    this.kind = state.kind
+    this.nextChange = clamp(Number.isFinite(state.nextChange) ? state.nextChange : 120, 1, 240)
+    this.lightningTimer = clamp(Number.isFinite(state.lightningTimer) ? state.lightningTimer : 6, 0.1, 20)
+
+    const source = state.out
+    if (!source || typeof source !== 'object') return
+    this.out = {
+      cloudCover: clamp(Number.isFinite(source.cloudCover) ? source.cloudCover : 0.26, 0, 1),
+      cloudDark: clamp(Number.isFinite(source.cloudDark) ? source.cloudDark : 0, 0, 1),
+      lightMul: clamp(Number.isFinite(source.lightMul) ? source.lightMul : 1, 0.1, 1),
+      fogMul: clamp(Number.isFinite(source.fogMul) ? source.fogMul : 1, 0.5, 3),
+      rain: clamp(Number.isFinite(source.rain) ? source.rain : 0, 0, 1),
+      snow: clamp(Number.isFinite(source.snow) ? source.snow : 0, 0, 1),
+      wind: clamp(Number.isFinite(source.wind) ? source.wind : 0.8, 0, 4),
+      wetness: clamp(Number.isFinite(source.wetness) ? source.wetness : 0, 0, 1)
+    }
   }
 
   update(dt: number, cold: boolean, audio: AudioMan): void {
