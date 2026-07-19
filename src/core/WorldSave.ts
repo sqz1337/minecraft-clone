@@ -1,11 +1,17 @@
-import type { SerializedBlockEdits, SerializedBlockFacings } from '../world/World'
+import type { SerializedBlockEdits, SerializedBlockFacings, SerializedScheduledTicks } from '../world/World'
 import type { WeatherKind, WeatherState } from '../weather/Weather'
 import type { GameMode } from './Settings'
 import type { ItemStack, SerializedInventory } from '../player/Inventory'
+import type { SerializedEquipment } from '../player/Equipment'
 import type { SavedDrop } from '../world/ItemDrops'
 import type { SavedContainer } from '../world/Containers'
 import { CHEST_SLOTS } from '../world/Containers'
 import { ITEMS } from '../world/Items'
+import {
+  MOB_KINDS, VILLAGER_PROFESSIONS,
+  type MobKind, type SavedEntity, type VillagerProfession
+} from '../entities/EntityTypes'
+import { parseEnchantments } from '../player/Enchantments'
 
 const SAVE_VERSION = 1
 const STORAGE_PREFIX = 'realmcraft.world.v1.'
@@ -23,8 +29,13 @@ export interface SavedPlayerState {
   selectedSlot: number
   health: number
   hunger: number
+  saturation: number
   air: number
   exhaustion: number
+  experience: number
+  respawnX?: number
+  respawnY?: number
+  respawnZ?: number
 }
 
 export interface WorldSaveData {
@@ -34,12 +45,18 @@ export interface WorldSaveData {
   player: SavedPlayerState
   gameMode: GameMode
   inventory: SerializedInventory
+  armor: SerializedEquipment
   drops: SavedDrop[]
   containers: SavedContainer[]
   timeOfDay: number
   weather: WeatherState
   blockEdits: SerializedBlockEdits
   blockFacings: SerializedBlockFacings
+  scheduledTicks: SerializedScheduledTicks
+  entities: SavedEntity[]
+  /** One-shot procedural gameplay state; optional so version-1 saves remain compatible. */
+  structureChests?: string[]
+  villageChunks?: string[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -63,11 +80,25 @@ function parseInventory(value: unknown): SerializedInventory {
     const item = ITEMS[stack.id as number]
     if (!item || (stack.count as number) <= 0) continue
     const damage = parseDamage(stack.damage)
+    const enchantments = parseEnchantments(stack.enchantments, stack.id as number)
     slots[i] = {
       id: stack.id as number,
       count: Math.min(item.stackSize, stack.count as number),
-      ...(damage !== undefined ? { damage } : {})
+      ...(damage !== undefined ? { damage } : {}),
+      ...(enchantments ? { enchantments } : {})
     }
+  }
+  return slots
+}
+
+function parseEquipment(value: unknown): SerializedEquipment {
+  const slots: SerializedEquipment = Array(4).fill(null)
+  if (!Array.isArray(value)) return slots
+  const expected = ['head', 'chest', 'legs', 'feet'] as const
+  for (let i = 0; i < Math.min(4, value.length); i++) {
+    const stack = parseStack(value[i])
+    const armor = stack ? ITEMS[stack.id]?.armor : null
+    if (stack && armor?.slot === expected[i] && (stack.damage ?? 0) < armor.durability) slots[i] = { ...stack, count: 1 }
   }
   return slots
 }
@@ -79,10 +110,12 @@ function parseDrops(value: unknown): SavedDrop[] {
     if (!isRecord(raw) || !Number.isInteger(raw.id) || !Number.isInteger(raw.count) ||
       !isFiniteNumber(raw.x) || !isFiniteNumber(raw.y) || !isFiniteNumber(raw.z) || !ITEMS[raw.id as number]) continue
     const damage = parseDamage(raw.damage)
+    const enchantments = parseEnchantments(raw.enchantments, raw.id as number)
     drops.push({
       id: raw.id as number,
       count: Math.min(ITEMS[raw.id as number]!.stackSize, Math.max(1, raw.count as number)),
       ...(damage !== undefined ? { damage } : {}),
+      ...(enchantments ? { enchantments } : {}),
       x: raw.x,
       y: raw.y,
       z: raw.z
@@ -96,10 +129,12 @@ function parseStack(value: unknown): ItemStack | null {
   const item = ITEMS[value.id as number]
   if (!item || (value.count as number) <= 0) return null
   const damage = parseDamage(value.damage)
+  const enchantments = parseEnchantments(value.enchantments, value.id as number)
   return {
     id: value.id as number,
     count: Math.min(item.stackSize, value.count as number),
-    ...(damage !== undefined ? { damage } : {})
+    ...(damage !== undefined ? { damage } : {}),
+    ...(enchantments ? { enchantments } : {})
   }
 }
 
@@ -129,11 +164,62 @@ function parseContainers(value: unknown): SavedContainer[] {
         x, y, z, kind: 'furnace', slots,
         burn: time(raw.burn),
         burnTotal: time(raw.burnTotal),
-        cook: time(raw.cook)
+        cook: time(raw.cook),
+        xp: Math.min(10_000, time(raw.xp))
       })
     }
   }
   return containers
+}
+
+function parseEntities(value: unknown): SavedEntity[] {
+  if (!Array.isArray(value)) return []
+  const entities: SavedEntity[] = []
+  const seen = new Set<string>()
+  for (const raw of value.slice(0, 96)) {
+    if (!isRecord(raw) || typeof raw.id !== 'string' || raw.id.length < 1 || raw.id.length > 80 || seen.has(raw.id)) continue
+    if (!MOB_KINDS.includes(raw.kind as MobKind)) continue
+    if (!isFiniteNumber(raw.x) || !isFiniteNumber(raw.y) || !isFiniteNumber(raw.z) ||
+      !isFiniteNumber(raw.vx) || !isFiniteNumber(raw.vy) || !isFiniteNumber(raw.vz) ||
+      !isFiniteNumber(raw.yaw) || !isFiniteNumber(raw.health)) continue
+    if (Math.abs(raw.x) > 30_000_000 || Math.abs(raw.z) > 30_000_000 || raw.y < -64 || raw.y > 512) continue
+    seen.add(raw.id)
+    entities.push({
+      id: raw.id,
+      kind: raw.kind as MobKind,
+      x: raw.x, y: raw.y, z: raw.z,
+      vx: Math.max(-20, Math.min(20, raw.vx)),
+      vy: Math.max(-20, Math.min(20, raw.vy)),
+      vz: Math.max(-20, Math.min(20, raw.vz)),
+      yaw: raw.yaw,
+      health: Math.max(1, Math.min(40, raw.health)),
+      age: isFiniteNumber(raw.age) ? Math.max(-1200, Math.min(0, raw.age)) : 0,
+      breedCooldown: isFiniteNumber(raw.breedCooldown) ? Math.max(0, Math.min(300, raw.breedCooldown)) : 0,
+      eggTimer: isFiniteNumber(raw.eggTimer) ? Math.max(0, Math.min(600, raw.eggTimer)) : 0,
+      ...(isFiniteNumber(raw.attackCooldown) ? { attackCooldown: Math.max(0, Math.min(10, raw.attackCooldown)) } : {}),
+      ...(isFiniteNumber(raw.fuse) ? { fuse: Math.max(0, Math.min(1.5, raw.fuse)) } : {}),
+      ...(isFiniteNumber(raw.angryTime) ? { angryTime: Math.max(0, Math.min(30, raw.angryTime)) } : {}),
+      ...(isFiniteNumber(raw.sizeScale) ? { sizeScale: Math.max(0.25, Math.min(1, raw.sizeScale)) } : {}),
+      ...(typeof raw.sheared === 'boolean' ? { sheared: raw.sheared } : {}),
+      ...(isFiniteNumber(raw.woolTimer) ? { woolTimer: Math.max(0, Math.min(300, raw.woolTimer)) } : {}),
+      ...(raw.carriedBlock === null || isFiniteNumber(raw.carriedBlock)
+        ? { carriedBlock: raw.carriedBlock === null ? null : Math.max(0, Math.min(255, Math.floor(raw.carriedBlock))) }
+        : {}),
+      ...(raw.kind === 'villager' && VILLAGER_PROFESSIONS.includes(raw.profession as VillagerProfession)
+        ? { profession: raw.profession as VillagerProfession }
+        : {}),
+      ...(raw.kind === 'villager' && isFiniteNumber(raw.homeX) ? { homeX: raw.homeX } : {}),
+      ...(raw.kind === 'villager' && isFiniteNumber(raw.homeZ) ? { homeZ: raw.homeZ } : {})
+    })
+  }
+  return entities
+}
+
+function parseKeyList(value: unknown, pattern: RegExp, limit: number): string[] {
+  if (!Array.isArray(value)) return []
+  const out = new Set<string>()
+  for (const raw of value.slice(0, limit)) if (typeof raw === 'string' && pattern.test(raw)) out.add(raw)
+  return [...out]
 }
 
 function parseSave(value: unknown, seed: string): WorldSaveData | null {
@@ -165,6 +251,14 @@ function parseSave(value: unknown, seed: string): WorldSaveData | null {
 
   if (!isFiniteNumber(value.timeOfDay) || !isRecord(value.blockEdits)) return null
   const blockFacings = isRecord(value.blockFacings) ? value.blockFacings : {}
+  const scheduledTicks: number[] = []
+  if (Array.isArray(value.scheduledTicks)) {
+    const rawTicks = value.scheduledTicks.slice(0, 4096 * 5)
+    for (let i = 0; i + 4 < rawTicks.length; i += 5) {
+      const tuple = rawTicks.slice(i, i + 5)
+      if (tuple.every(isFiniteNumber)) scheduledTicks.push(...tuple)
+    }
+  }
 
   return {
     version: SAVE_VERSION,
@@ -182,17 +276,29 @@ function parseSave(value: unknown, seed: string): WorldSaveData | null {
       selectedSlot: Math.max(0, Math.floor(player.selectedSlot as number)),
       health: isFiniteNumber(player.health) ? Math.max(1, Math.min(20, player.health)) : 20,
       hunger: isFiniteNumber(player.hunger) ? Math.max(0, Math.min(20, player.hunger)) : 20,
+      saturation: isFiniteNumber(player.saturation)
+        ? Math.max(0, Math.min(20, player.saturation))
+        : 5,
       air: isFiniteNumber(player.air) ? Math.max(0, Math.min(10, player.air)) : 10,
-      exhaustion: isFiniteNumber(player.exhaustion) ? Math.max(0, player.exhaustion) : 0
+      exhaustion: isFiniteNumber(player.exhaustion) ? Math.max(0, player.exhaustion) : 0,
+      experience: isFiniteNumber(player.experience) ? Math.max(0, Math.min(10_000_000, Math.floor(player.experience))) : 0,
+      ...(isFiniteNumber(player.respawnX) && isFiniteNumber(player.respawnY) && isFiniteNumber(player.respawnZ)
+        ? { respawnX: player.respawnX, respawnY: player.respawnY, respawnZ: player.respawnZ }
+        : {})
     },
     gameMode: value.gameMode === 'survival' ? 'survival' : 'creative',
     inventory: parseInventory(value.inventory),
+    armor: parseEquipment(value.armor),
     drops: parseDrops(value.drops),
     containers: parseContainers(value.containers),
     timeOfDay: value.timeOfDay,
     weather: weather as unknown as WeatherState,
     blockEdits: value.blockEdits as SerializedBlockEdits,
-    blockFacings: blockFacings as SerializedBlockFacings
+    blockFacings: blockFacings as SerializedBlockFacings,
+    scheduledTicks,
+    entities: parseEntities(value.entities),
+    structureChests: parseKeyList(value.structureChests, /^-?\d+,-?\d+,-?\d+$/, 16384),
+    villageChunks: parseKeyList(value.villageChunks, /^-?\d+,-?\d+$/, 16384)
   }
 }
 

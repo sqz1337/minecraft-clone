@@ -42,7 +42,7 @@ function shapeless(ingredients: readonly Ingredient[], id: number, count = 1): S
   return { kind: 'shapeless', ingredients, result: { id, count } }
 }
 
-const ANY_LOG: Ingredient = [B.LOG, B.PINELOG]
+const ANY_LOG: Ingredient = [B.LOG, B.PINELOG, B.JUNGLE_LOG]
 
 interface ToolMaterial {
   readonly item: Ingredient
@@ -53,12 +53,27 @@ interface ToolMaterial {
   readonly hoe: number
 }
 
+interface ArmorMaterial {
+  readonly item: Ingredient
+  readonly helmet: number
+  readonly chestplate: number
+  readonly leggings: number
+  readonly boots: number
+}
+
 const TOOL_MATERIALS: readonly ToolMaterial[] = [
   { item: B.PLANKS, sword: I.WOODEN_SWORD, shovel: I.WOODEN_SHOVEL, pickaxe: I.WOODEN_PICKAXE, axe: I.WOODEN_AXE, hoe: I.WOODEN_HOE },
   { item: B.COBBLESTONE, sword: I.STONE_SWORD, shovel: I.STONE_SHOVEL, pickaxe: I.STONE_PICKAXE, axe: I.STONE_AXE, hoe: I.STONE_HOE },
   { item: I.IRON_INGOT, sword: I.IRON_SWORD, shovel: I.IRON_SHOVEL, pickaxe: I.IRON_PICKAXE, axe: I.IRON_AXE, hoe: I.IRON_HOE },
   { item: I.DIAMOND, sword: I.DIAMOND_SWORD, shovel: I.DIAMOND_SHOVEL, pickaxe: I.DIAMOND_PICKAXE, axe: I.DIAMOND_AXE, hoe: I.DIAMOND_HOE },
   { item: I.GOLD_INGOT, sword: I.GOLDEN_SWORD, shovel: I.GOLDEN_SHOVEL, pickaxe: I.GOLDEN_PICKAXE, axe: I.GOLDEN_AXE, hoe: I.GOLDEN_HOE }
+]
+
+const ARMOR_MATERIALS: readonly ArmorMaterial[] = [
+  { item: I.LEATHER, helmet: I.LEATHER_HELMET, chestplate: I.LEATHER_CHESTPLATE, leggings: I.LEATHER_LEGGINGS, boots: I.LEATHER_BOOTS },
+  { item: I.IRON_INGOT, helmet: I.IRON_HELMET, chestplate: I.IRON_CHESTPLATE, leggings: I.IRON_LEGGINGS, boots: I.IRON_BOOTS },
+  { item: I.DIAMOND, helmet: I.DIAMOND_HELMET, chestplate: I.DIAMOND_CHESTPLATE, leggings: I.DIAMOND_LEGGINGS, boots: I.DIAMOND_BOOTS },
+  { item: I.GOLD_INGOT, helmet: I.GOLDEN_HELMET, chestplate: I.GOLDEN_CHESTPLATE, leggings: I.GOLDEN_LEGGINGS, boots: I.GOLDEN_BOOTS }
 ]
 
 export const RECIPES: readonly Recipe[] = [
@@ -68,12 +83,42 @@ export const RECIPES: readonly Recipe[] = [
   shaped(['CCC', 'C C', 'CCC'], { C: B.COBBLESTONE }, B.FURNACE),
   shaped(['PPP', 'P P', 'PPP'], { P: B.PLANKS }, B.CHEST),
   shaped(['C', 'S'], { C: I.COAL, S: I.STICK }, B.TORCH, 4),
+  shaped(['P P', ' P '], { P: B.PLANKS }, I.BOWL, 4),
+  shaped(['WWW'], { W: I.WHEAT }, I.BREAD),
+  shapeless([B.MUSHROOM_BROWN, B.MUSHROOM_RED, I.BOWL], I.MUSHROOM_STEW),
+  shapeless([B.SUGARCANE], I.SUGAR),
+  shaped(['SSS'], { S: B.SUGARCANE }, I.PAPER, 3),
+  shaped(['P', 'P', 'P'], { P: I.PAPER }, I.BOOK),
+  shaped(['PPP', 'BBB', 'PPP'], { P: B.PLANKS, B: I.BOOK }, B.BOOKSHELF),
+  shaped([' B ', 'DOD', 'OOO'], { B: I.BOOK, D: I.DIAMOND, O: B.OBSIDIAN }, B.ENCHANTING_TABLE),
+  shapeless([I.BONE], I.BONE_MEAL, 3),
+  shaped([' ST', 'S T', ' ST'], { S: I.STICK, T: I.STRING }, I.BOW),
+  shaped(['F', 'S', 'T'], { F: I.FLINT, S: I.STICK, T: I.FEATHER }, I.ARROW, 4),
+  shaped(['I I', ' I '], { I: I.IRON_INGOT }, I.BUCKET),
+  shaped([' I', 'I '], { I: I.IRON_INGOT }, I.SHEARS),
+  shapeless([I.IRON_INGOT, I.FLINT], I.FLINT_AND_STEEL),
+  shaped(['GSG', 'SGS', 'GSG'], { G: I.GUNPOWDER, S: B.SAND }, B.TNT),
+  shaped(['SS', 'SS'], { S: I.STRING }, B.WOOL),
+  shaped(['WWW', 'PPP'], { W: B.WOOL, P: B.PLANKS }, I.BED),
+  shaped(['SS', 'SS'], { S: B.STONE }, B.STONE_BRICK, 4),
+  shaped(['SS', 'SS'], { S: B.SAND }, B.SANDSTONE),
+  shaped(['I I', 'ISI', 'I I'], { I: I.IRON_INGOT, S: I.STICK }, B.RAIL, 16),
+  // Classic compass and clock need redstone; flint stands in until stage 14.
+  shaped([' I ', 'IFI', ' I '], { I: I.IRON_INGOT, F: I.FLINT }, I.COMPASS),
+  shaped([' G ', 'GFG', ' G '], { G: I.GOLD_INGOT, F: I.FLINT }, I.CLOCK),
+  shaped(['PPP', 'PCP', 'PPP'], { P: I.PAPER, C: I.COMPASS }, I.MAP),
   ...TOOL_MATERIALS.flatMap(m => [
     shaped(['M', 'M', 'S'], { M: m.item, S: I.STICK }, m.sword),
     shaped(['M', 'S', 'S'], { M: m.item, S: I.STICK }, m.shovel),
     shaped(['MMM', ' S ', ' S '], { M: m.item, S: I.STICK }, m.pickaxe),
     shaped(['MM', 'MS', ' S'], { M: m.item, S: I.STICK }, m.axe),
     shaped(['MM', ' S', ' S'], { M: m.item, S: I.STICK }, m.hoe)
+  ]),
+  ...ARMOR_MATERIALS.flatMap(m => [
+    shaped(['MMM', 'M M'], { M: m.item }, m.helmet),
+    shaped(['M M', 'MMM', 'MMM'], { M: m.item }, m.chestplate),
+    shaped(['MMM', 'M M', 'M M'], { M: m.item }, m.leggings),
+    shaped(['M M', 'M M'], { M: m.item }, m.boots)
   ])
 ]
 
@@ -81,7 +126,7 @@ export const RECIPES: readonly Recipe[] = [
  * Furnace data, classic 1.2.4 values converted from ticks to seconds:
  * every item smelts in 10s, coal burns for 80s (8 items), wooden blocks
  * for 15s, sticks for 5s and wooden tools for 10s. Food recipes join the
- * list in stage 6 together with the food items themselves.
+ * list is intentionally mineral-focused; stage 6 food is crafted and eaten.
  */
 export const FURNACE_SMELT_SECONDS = 10
 
@@ -90,7 +135,11 @@ const SMELTING = new Map<number, RecipeResult>([
   [B.GOLD_ORE, { id: I.GOLD_INGOT, count: 1 }],
   [B.DIAMOND_ORE, { id: I.DIAMOND, count: 1 }],
   [B.SAND, { id: B.GLASS, count: 1 }],
-  [B.COBBLESTONE, { id: B.STONE, count: 1 }]
+  [B.COBBLESTONE, { id: B.STONE, count: 1 }],
+  [I.RAW_PORKCHOP, { id: I.COOKED_PORKCHOP, count: 1 }],
+  [I.RAW_BEEF, { id: I.STEAK, count: 1 }],
+  [I.RAW_CHICKEN, { id: I.COOKED_CHICKEN, count: 1 }],
+  [I.RAW_MUTTON, { id: I.COOKED_MUTTON, count: 1 }]
 ])
 
 const FUEL_SECONDS = new Map<number, number>([
@@ -98,6 +147,7 @@ const FUEL_SECONDS = new Map<number, number>([
   [B.PLANKS, 15],
   [B.LOG, 15],
   [B.PINELOG, 15],
+  [B.JUNGLE_LOG, 15],
   [B.CRAFTING_TABLE, 15],
   [B.CHEST, 15],
   [I.WOODEN_SWORD, 10],
@@ -111,6 +161,23 @@ const FUEL_SECONDS = new Map<number, number>([
 /** Furnace output for an input item id, or null when it cannot be smelted. */
 export function smeltResultFor(id: number): RecipeResult | null {
   return SMELTING.get(id) ?? null
+}
+
+/** Classic per-item smelting experience, banked by the furnace until the output is taken. */
+const SMELT_XP = new Map<number, number>([
+  [B.IRON_ORE, 0.7],
+  [B.GOLD_ORE, 1],
+  [B.DIAMOND_ORE, 1],
+  [B.SAND, 0.1],
+  [B.COBBLESTONE, 0.1],
+  [I.RAW_PORKCHOP, 0.35],
+  [I.RAW_BEEF, 0.35],
+  [I.RAW_CHICKEN, 0.35],
+  [I.RAW_MUTTON, 0.35]
+])
+
+export function smeltXpFor(id: number): number {
+  return SMELT_XP.get(id) ?? 0
 }
 
 /** Burn duration of a fuel item in seconds, or 0 when it is not a fuel. */

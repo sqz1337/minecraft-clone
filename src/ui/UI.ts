@@ -1,5 +1,5 @@
 import { HOTBAR, B, tileFor, CROSS } from '../world/Blocks'
-import { ITEMS, itemName } from '../world/Items'
+import { ITEMS, durabilityForItem, itemName } from '../world/Items'
 import { FURNACE_SMELT_SECONDS, RECIPES, Recipe, recipeIngredients } from '../world/Recipes'
 import type { Atlas } from '../gfx/Atlas'
 import type { ItemSprites } from '../gfx/ItemSprites'
@@ -8,6 +8,8 @@ import type { Inventory, ItemStack } from '../player/Inventory'
 import type { Crafting, CursorHolder } from '../player/Crafting'
 import type { FurnaceState } from '../world/Containers'
 import type { MinecraftFont } from './MinecraftFont'
+import type { Equipment } from '../player/Equipment'
+import { stackDisplayName, type EnchantingState } from '../player/Enchantments'
 
 function el<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id)
@@ -27,6 +29,7 @@ export interface HudData {
 }
 
 export type SlotButton = 0 | 2
+export type SlotHandler = (index: number, button: SlotButton, shift: boolean) => void
 
 /** The container screen currently shown over the game. */
 export type UIScreen =
@@ -34,6 +37,7 @@ export type UIScreen =
   | { kind: 'workbench'; crafting: Crafting }
   | { kind: 'chest'; slots: Array<ItemStack | null>; holder: CursorHolder; double: boolean }
   | { kind: 'furnace'; state: FurnaceState; holder: CursorHolder }
+  | { kind: 'enchant'; holder: EnchantingState }
   | { kind: 'admin' }
 
 export class UI {
@@ -42,15 +46,19 @@ export class UI {
   onQuit: () => void = () => location.reload()
   onSettingsChanged: () => void = () => {}
   onInventoryToggle: () => void = () => {}
-  onInventorySlotClick: (slot: number, button: SlotButton) => void = () => {}
-  onCraftSlotClick: (index: number, button: SlotButton) => void = () => {}
+  onInventorySlotClick: SlotHandler = () => {}
+  onArmorSlotClick: SlotHandler = () => {}
+  onCraftSlotClick: SlotHandler = () => {}
   onCraftResultClick: () => void = () => {}
   /** Clicks on chest slots (0..26/53) or furnace slots (0 input, 1 fuel, 2 output). */
-  onContainerSlotClick: (index: number, button: SlotButton) => void = () => {}
+  onContainerSlotClick: SlotHandler = () => {}
+  onEnchantSlotClick: (button: SlotButton) => void = () => {}
+  onEnchantOfferClick: (index: number) => void = () => {}
   /** Click on a craftable recipe in the workbench recipe book. */
   onRecipeClick: (index: number) => void = () => {}
   /** Click on an item in the temporary admin panel. */
   onAdminItemClick: (id: number, button: SlotButton) => void = () => {}
+  onOutsideInventoryClick: (button: SlotButton) => void = () => {}
 
   private title = el<HTMLDivElement>('title')
   private loading = el<HTMLDivElement>('loading')
@@ -64,6 +72,7 @@ export class UI {
   private workbenchWindow = el<HTMLDivElement>('workbench-window')
   private furnaceWindow = el<HTMLDivElement>('furnace-window')
   private chestWindow = el<HTMLDivElement>('chest-window')
+  private enchantWindow = el<HTMLDivElement>('enchant-window')
   private inventoryTitle = document.querySelector<HTMLDivElement>('.inventory-title')!
   private inventoryCraftingTitle = document.querySelector<HTMLDivElement>('.inventory-crafting-title')!
   private workbenchTitle = document.querySelector<HTMLDivElement>('.workbench-title')!
@@ -71,12 +80,16 @@ export class UI {
   private furnaceInventoryTitle = document.querySelector<HTMLDivElement>('.furnace-inventory-title')!
   private chestTitle = document.querySelector<HTMLDivElement>('.chest-title')!
   private chestInventoryTitle = document.querySelector<HTMLDivElement>('.chest-inventory-title')!
+  private enchantTitle = document.querySelector<HTMLDivElement>('.enchant-title')!
+  private enchantPower = document.querySelector<HTMLDivElement>('.enchant-power')!
   private furnaceFlame = el<HTMLDivElement>('furnace-flame')
   private furnaceArrow = el<HTMLDivElement>('furnace-arrow')
   private recipeToggle = el<HTMLButtonElement>('recipe-toggle')
   private recipeBook = el<HTMLDivElement>('recipe-book')
+  private recipePreview = el<HTMLDivElement>('recipe-preview')
   private adminWindow = el<HTMLDivElement>('admin-window')
   private recipeBookOpen = false
+  private recipePreviewIndex = 0
   private inventoryCursor = el<HTMLDivElement>('inventory-cursor')
   private hud = el<HTMLDivElement>('hud')
   private info = el<HTMLDivElement>('info')
@@ -84,10 +97,15 @@ export class UI {
   private blockName = el<HTMLDivElement>('block-name')
   private survivalStats = el<HTMLDivElement>('survival-stats')
   private healthBar = el<HTMLDivElement>('health-bar')
+  private armorBar = el<HTMLDivElement>('armor-bar')
   private hungerBar = el<HTMLDivElement>('hunger-bar')
   private airBar = el<HTMLDivElement>('air-bar')
   private experienceBar = el<HTMLDivElement>('experience-bar')
+  private experienceLevelEl = el<HTMLDivElement>('experience-level')
   private toastEl = el<HTMLDivElement>('toast')
+  private mapOverlay = el<HTMLDivElement>('map-overlay')
+  private mapCanvas = el<HTMLCanvasElement>('map-canvas')
+  private mapCaption = el<HTMLDivElement>('map-caption')
   private underwater = el<HTMLDivElement>('underwater-overlay')
   private damageOverlay = el<HTMLDivElement>('damage-overlay')
   private settingsPanel = el<HTMLDivElement>('settings-panel')
@@ -96,11 +114,14 @@ export class UI {
   private atlas: Atlas | null = null
   private sprites: ItemSprites | null = null
   private inventory: Inventory | null = null
+  private equipment: Equipment | null = null
   private screen: UIScreen | null = null
   private mode: GameMode = 'creative'
   private toastTimer: number | null = null
+  private mapTimer: number | null = null
   private blockNameTimer: number | null = null
   private guiScale = 1
+  private experienceLevel = 0
 
   constructor(private settings: Settings, private font: MinecraftFont) {
     this.updateGuiScale()
@@ -110,6 +131,11 @@ export class UI {
       this.inventoryCursor.style.top = `${event.clientY}px`
     })
     this.inventoryScreen.addEventListener('contextmenu', (event) => event.preventDefault())
+    this.inventoryScreen.addEventListener('mousedown', (event) => {
+      if (event.target === this.inventoryScreen && (event.button === 0 || event.button === 2)) {
+        this.onOutsideInventoryClick(event.button as SlotButton)
+      }
+    })
     this.recipeToggle.addEventListener('click', () => {
       this.recipeBookOpen = !this.recipeBookOpen
       this.renderScreen()
@@ -158,11 +184,12 @@ export class UI {
     })
   }
 
-  configureGame(atlas: Atlas, sprites: ItemSprites, mode: GameMode, inventory: Inventory): void {
+  configureGame(atlas: Atlas, sprites: ItemSprites, mode: GameMode, inventory: Inventory, equipment: Equipment): void {
     this.atlas = atlas
     this.sprites = sprites
     this.mode = mode
     this.inventory = inventory
+    this.equipment = equipment
     this.survivalStats.classList.toggle('hidden', mode !== 'survival')
     this.experienceBar.classList.toggle('hidden', mode !== 'survival')
     this.inventoryTitle.replaceChildren(this.font.createCanvas('Inventory', '#404040', false))
@@ -171,6 +198,7 @@ export class UI {
     this.furnaceTitle.replaceChildren(this.font.createCanvas('Furnace', '#404040', false))
     this.furnaceInventoryTitle.replaceChildren(this.font.createCanvas('Inventory', '#404040', false))
     this.chestInventoryTitle.replaceChildren(this.font.createCanvas('Inventory', '#404040', false))
+    this.enchantTitle.replaceChildren(this.font.createCanvas('Enchant', '#404040', false))
     document.querySelector<HTMLDivElement>('.recipe-book-title')!
       .replaceChildren(this.font.createCanvas('Recipes', '#404040', false))
     document.querySelector<HTMLDivElement>('.admin-title')!
@@ -190,6 +218,7 @@ export class UI {
     this.workbenchWindow.classList.toggle('hidden', kind !== 'workbench')
     this.furnaceWindow.classList.toggle('hidden', kind !== 'furnace')
     this.chestWindow.classList.toggle('hidden', kind !== 'chest')
+    this.enchantWindow.classList.toggle('hidden', kind !== 'enchant')
     this.adminWindow.classList.toggle('hidden', kind !== 'admin')
     if (screen?.kind === 'chest') {
       this.chestWindow.classList.toggle('double', screen.double)
@@ -282,6 +311,13 @@ export class UI {
         if (event.button === 0 || event.button === 2) this.onCraftResultClick()
       })
       result.appendChild(slot)
+      if (screen.kind === 'inventory') {
+        const armor = el<HTMLDivElement>('inventory-armor')
+        armor.innerHTML = ''
+        this.equipment?.slots.forEach((stack, index) => {
+          armor.appendChild(this.makeClickableSlot(stack, index, this.onArmorSlotClick))
+        })
+      }
       if (screen.kind === 'workbench') this.renderRecipeBook(screen.crafting)
     } else if (screen.kind === 'chest') {
       const grid = el<HTMLDivElement>('chest-grid')
@@ -289,7 +325,7 @@ export class UI {
       screen.slots.forEach((stack, index) => {
         grid.appendChild(this.makeClickableSlot(stack, index, this.onContainerSlotClick))
       })
-    } else {
+    } else if (screen.kind === 'furnace') {
       const wraps = ['furnace-input', 'furnace-fuel', 'furnace-output']
       wraps.forEach((id, index) => {
         const wrap = el<HTMLDivElement>(id)
@@ -297,6 +333,8 @@ export class UI {
         wrap.appendChild(this.makeClickableSlot(screen.state.slots[index], index, this.onContainerSlotClick))
       })
       this.updateFurnace(screen.state)
+    } else if (screen.kind === 'enchant') {
+      this.renderEnchanting(screen.holder)
     }
     this.renderCursor()
   }
@@ -304,13 +342,42 @@ export class UI {
   private makeClickableSlot(
     stack: ItemStack | null,
     index: number,
-    handler: (index: number, button: SlotButton) => void
+    handler: SlotHandler
   ): HTMLDivElement {
     const slot = this.makeSlot(stack?.id ?? B.AIR, stack, index, true)
     slot.addEventListener('mousedown', (event) => {
-      if (event.button === 0 || event.button === 2) handler(index, event.button as SlotButton)
+      if (event.button === 0 || event.button === 2) handler(index, event.button as SlotButton, event.shiftKey)
     })
     return slot
+  }
+
+  private renderEnchanting(state: EnchantingState): void {
+    const slotWrap = el<HTMLDivElement>('enchant-item')
+    slotWrap.innerHTML = ''
+    const slot = this.makeClickableSlot(state.slots[0], 0, (_index, button) => this.onEnchantSlotClick(button))
+    slotWrap.appendChild(slot)
+    this.enchantPower.replaceChildren(this.font.createCanvas(`Power ${state.bookshelfPower}/30`, '#404040', false))
+    const offers = el<HTMLDivElement>('enchant-offers')
+    offers.innerHTML = ''
+    for (let index = 0; index < 3; index++) {
+      const offer = state.offers[index]
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'enchant-offer'
+      if (!offer) {
+        button.disabled = true
+      } else {
+        const affordable = this.experienceLevel >= offer.cost
+        button.classList.toggle('unavailable', !affordable)
+        button.title = offer.enchantments.map(enchantment => `${enchantment.id} ${enchantment.level}`).join(', ')
+        button.append(
+          this.font.createCanvas(offer.clue, affordable ? '#403020' : '#6b5a48', false),
+          this.font.createCanvas(String(offer.cost), affordable ? '#80ff20' : '#ff6060', false)
+        )
+        button.addEventListener('click', () => this.onEnchantOfferClick(index))
+      }
+      offers.appendChild(button)
+    }
   }
 
   /**
@@ -321,6 +388,7 @@ export class UI {
    */
   private renderRecipeBook(crafting: Crafting): void {
     this.recipeBook.classList.toggle('hidden', !this.recipeBookOpen)
+    this.recipePreview.classList.toggle('hidden', !this.recipeBookOpen)
     if (!this.recipeBookOpen) return
     const grid = el<HTMLDivElement>('recipe-grid')
     grid.innerHTML = ''
@@ -329,6 +397,7 @@ export class UI {
     for (const stack of stacks) {
       if (stack && stack.damage === undefined) counts.set(stack.id, (counts.get(stack.id) ?? 0) + stack.count)
     }
+    this.recipePreviewIndex = Math.min(this.recipePreviewIndex, RECIPES.length - 1)
     RECIPES.forEach((recipe, index) => {
       const craftable = this.canCraft(recipe, counts)
       const slot = this.makeClickableSlot(
@@ -339,8 +408,68 @@ export class UI {
         }
       )
       if (!craftable) slot.classList.add('uncraftable')
+      slot.classList.toggle('previewed', index === this.recipePreviewIndex)
+      slot.tabIndex = 0
+      slot.setAttribute('role', 'button')
+      slot.setAttribute('aria-label', `${itemName(recipe.result.id)} recipe`)
+      const showPreview = () => {
+        this.recipePreviewIndex = index
+        grid.querySelectorAll('.inventory-slot').forEach((candidate, candidateIndex) => {
+          candidate.classList.toggle('previewed', candidateIndex === index)
+        })
+        this.renderRecipePreview(recipe, craftable)
+      }
+      slot.addEventListener('mouseenter', showPreview)
+      slot.addEventListener('focus', showPreview)
       grid.appendChild(slot)
     })
+    const selected = RECIPES[this.recipePreviewIndex]
+    this.renderRecipePreview(selected, this.canCraft(selected, counts))
+  }
+
+  /** Shows the exact 3x3 placement for the recipe selected in the book. */
+  private renderRecipePreview(recipe: Recipe, craftable: boolean): void {
+    const grid = el<HTMLDivElement>('recipe-preview-grid')
+    const result = el<HTMLDivElement>('recipe-preview-result')
+    const name = el<HTMLDivElement>('recipe-preview-name')
+    const kind = el<HTMLDivElement>('recipe-preview-kind')
+    const status = el<HTMLDivElement>('recipe-preview-status')
+    const ingredients: Array<number | readonly number[] | null> = Array(9).fill(null)
+
+    if (recipe.kind === 'shaped') {
+      recipe.pattern.forEach((row, y) => {
+        for (let x = 0; x < row.length; x++) {
+          const key = row[x]
+          if (key !== ' ') ingredients[y * 3 + x] = recipe.keys[key] ?? null
+        }
+      })
+    } else {
+      recipe.ingredients.forEach((ingredient, index) => { ingredients[index] = ingredient })
+    }
+
+    grid.replaceChildren(...ingredients.map((ingredient, index) => {
+      if (ingredient === null) return this.makeSlot(B.AIR, null, index, true)
+      const ids = typeof ingredient === 'number' ? [ingredient] : [...ingredient]
+      const slot = this.makeSlot(ids[0], { id: ids[0], count: 1 }, index, true)
+      const alternatives = ids.map(id => itemName(id)).join(' / ')
+      slot.title = alternatives
+      slot.setAttribute('aria-label', alternatives)
+      return slot
+    }))
+    result.replaceChildren(this.makeSlot(
+      recipe.result.id,
+      { id: recipe.result.id, count: recipe.result.count },
+      0,
+      true
+    ))
+    name.replaceChildren(this.font.createCanvas(itemName(recipe.result.id), '#404040', false))
+    kind.replaceChildren(this.font.createCanvas(recipe.kind === 'shaped' ? 'Shaped 3x3' : 'Shapeless', '#404040', false))
+    status.replaceChildren(this.font.createCanvas(craftable ? 'Ready to craft' : 'Missing items', '#404040', false))
+    status.classList.toggle('unavailable', !craftable)
+    this.recipePreview.setAttribute(
+      'aria-label',
+      `${itemName(recipe.result.id)}, ${recipe.kind} recipe, ${craftable ? 'ready to craft' : 'missing items'}`
+    )
   }
 
   private canCraft(recipe: Recipe, counts: ReadonlyMap<number, number>): boolean {
@@ -383,7 +512,7 @@ export class UI {
     const stack = this.inventory!.slots[index]
     const slot = this.makeSlot(stack?.id ?? B.AIR, stack, index, true)
     slot.addEventListener('mousedown', (event) => {
-      if (event.button === 0 || event.button === 2) this.onInventorySlotClick(index, event.button as SlotButton)
+      if (event.button === 0 || event.button === 2) this.onInventorySlotClick(index, event.button as SlotButton, event.shiftKey)
     })
     parent.appendChild(slot)
   }
@@ -414,12 +543,13 @@ export class UI {
       slot.appendChild(canvas)
     }
     if (stack) {
+      if (stack.enchantments?.length) slot.classList.add('enchanted')
       if (stack.count > 1) {
         const count = this.font.createCanvas(String(stack.count))
         count.classList.add('count')
         slot.appendChild(count)
       }
-      const durability = ITEMS[stack.id]?.tool?.tier.durability
+      const durability = durabilityForItem(stack.id)
       if (durability && stack.damage) {
         const fraction = Math.max(0, 1 - stack.damage / durability)
         const track = document.createElement('div')
@@ -431,7 +561,7 @@ export class UI {
         track.appendChild(fill)
         slot.appendChild(track)
       }
-      slot.title = itemName(stack.id)
+      slot.dataset.tooltip = stackDisplayName(stack).replaceAll('\n', ' · ')
     }
     return slot
   }
@@ -455,17 +585,21 @@ export class UI {
   setSelectedSlot(index: number): void {
     this.slots.forEach((slot, current) => slot.classList.toggle('selected', index === current))
     const id = this.hotbarBlocks[index] ?? B.AIR
-    const name = id === B.AIR || !ITEMS[id] ? 'Empty hand' : itemName(id)
+    const selectedStack = this.mode === 'survival' ? this.inventory?.slots[index] ?? null : null
+    const name = selectedStack
+      ? stackDisplayName(selectedStack).replaceAll('\n', ' · ')
+      : id === B.AIR || !ITEMS[id] ? 'Empty hand' : itemName(id)
     this.blockName.replaceChildren(this.font.createCanvas(name))
     this.blockName.classList.add('visible')
     if (this.blockNameTimer !== null) clearTimeout(this.blockNameTimer)
     this.blockNameTimer = window.setTimeout(() => this.blockName.classList.remove('visible'), 1600)
   }
 
-  updateSurvivalStats(health: number, hunger: number, air: number): void {
+  updateSurvivalStats(health: number, hunger: number, air: number, armor = 0): void {
     if (this.mode !== 'survival') return
     this.healthBar.innerHTML = this.statusIcons('heart', health)
     this.hungerBar.innerHTML = this.statusIcons('food', hunger)
+    this.armorBar.innerHTML = armor > 0 ? this.statusIcons('armor', armor) : ''
     this.airBar.classList.toggle('hidden', air >= 9.95)
     this.airBar.innerHTML = ''
     for (let i = 0; i < 10; i++) {
@@ -475,7 +609,17 @@ export class UI {
     }
   }
 
-  private statusIcons(kind: 'heart' | 'food', value: number): string {
+  updateExperience(level: number, fraction: number): void {
+    this.experienceLevel = Math.max(0, Math.floor(level))
+    const fill = el<HTMLDivElement>('experience-fill')
+    fill.style.width = `${Math.round(Math.max(0, Math.min(1, fraction)) * 182)}px`
+    this.experienceLevelEl.replaceChildren(
+      ...(this.experienceLevel > 0 ? [this.font.createCanvas(String(this.experienceLevel), '#80ff20')] : [])
+    )
+    if (this.screen?.kind === 'enchant') this.renderScreen()
+  }
+
+  private statusIcons(kind: 'heart' | 'food' | 'armor', value: number): string {
     let html = ''
     for (let i = 0; i < 10; i++) {
       const remaining = value - i * 2
@@ -530,6 +674,25 @@ export class UI {
     if (data.flying) lines.push('Flight enabled')
     if (data.noclip) lines.push('Xray noclip enabled')
     this.info.replaceChildren(...lines.map(line => this.font.createCanvas(line)))
+  }
+
+  /** Displays a classic pixel map with the player centered and the original spawn marked in red. */
+  showMap(pixels: Uint8ClampedArray, size: number, centerX: number, centerZ: number, spawnX: number, spawnY: number): void {
+    this.mapCanvas.width = this.mapCanvas.height = size
+    const ctx = this.mapCanvas.getContext('2d')!
+    ctx.imageSmoothingEnabled = false
+    ctx.putImageData(new ImageData(pixels, size, size), 0, 0)
+    if (spawnX >= 0 && spawnY >= 0 && spawnX < size && spawnY < size) {
+      ctx.fillStyle = '#d72b2b'
+      ctx.fillRect(spawnX - 1, spawnY - 1, 3, 3)
+    }
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(Math.floor(size / 2), Math.floor(size / 2) - 2, 1, 5)
+    ctx.fillRect(Math.floor(size / 2) - 2, Math.floor(size / 2), 5, 1)
+    this.mapCaption.replaceChildren(this.font.createCanvas(`Map center: ${centerX}, ${centerZ}`))
+    this.mapOverlay.classList.remove('hidden')
+    if (this.mapTimer !== null) clearTimeout(this.mapTimer)
+    this.mapTimer = window.setTimeout(() => this.mapOverlay.classList.add('hidden'), 4200)
   }
 
   toast(message: string): void {

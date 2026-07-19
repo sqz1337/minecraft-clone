@@ -24,7 +24,8 @@ export function clickStackSlot(holder: CursorHolder, slots: Array<ItemStack | nu
       return
     }
     const max = ITEMS[cursor.id]?.stackSize ?? 1
-    if (slot && slot.id === cursor.id && slot.damage === undefined && cursor.damage === undefined && slot.count < max) {
+    if (slot && slot.id === cursor.id && slot.damage === undefined && cursor.damage === undefined &&
+      !slot.enchantments?.length && !cursor.enchantments?.length && slot.count < max) {
       const moved = Math.min(cursor.count, max - slot.count)
       slot.count += moved
       cursor.count -= moved
@@ -52,7 +53,8 @@ export function clickStackSlot(holder: CursorHolder, slots: Array<ItemStack | nu
     if (cursor.count === 0) holder.cursor = null
     return
   }
-  if (slot.id === cursor.id && slot.damage === undefined && cursor.damage === undefined && slot.count < max) {
+  if (slot.id === cursor.id && slot.damage === undefined && cursor.damage === undefined &&
+    !slot.enchantments?.length && !cursor.enchantments?.length && slot.count < max) {
     slot.count += 1
     cursor.count -= 1
     if (cursor.count === 0) holder.cursor = null
@@ -74,6 +76,7 @@ export function takeIntoCursor(holder: CursorHolder, slots: Array<ItemStack | nu
   }
   const max = ITEMS[cursor.id]?.stackSize ?? 1
   if (cursor.id !== slot.id || cursor.damage !== undefined || slot.damage !== undefined ||
+    cursor.enchantments?.length || slot.enchantments?.length ||
     cursor.count + slot.count > max) return false
   cursor.count += slot.count
   slots[index] = null
@@ -88,7 +91,7 @@ export function returnStacks(
 ): void {
   for (const stack of stacks) {
     if (!stack) continue
-    const left = inventory.add(stack.id, stack.count, stack.damage)
+    const left = inventory.add(stack.id, stack.count, stack.damage, stack.enchantments)
     if (left > 0) spill(cloneStack({ ...stack, count: left }))
   }
 }

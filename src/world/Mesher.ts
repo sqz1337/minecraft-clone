@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { B, OPAQUE, CROSS, ORE, tileFor, type HorizontalFace } from './Blocks'
+import { B, OPAQUE, CROSS, ORE, TILE, tileFor, isWater, isLava, isLeafBlock, isBedBlock, fluidLevel, type HorizontalFace } from './Blocks'
 import { Chunk, CHUNK_SIZE, WORLD_HEIGHT } from './Chunk'
 import { GRASS_TINT } from './WorldGen'
 import { hash301, hash01 } from '../util/math'
@@ -197,10 +197,10 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           }
         }
 
-        if (id === B.WATER) {
+        if (isWater(id)) {
           const above = sample(wx, y + 1, wz)
-          const surface = above !== B.WATER
-          const topH = surface ? WATER_SURFACE : 1
+          const surface = !isWater(above)
+          const topH = surface ? WATER_SURFACE * (8 - fluidLevel(id)) / 8 : 1
           if (surface && !OPAQUE[above]) {
             // top face
             water.vertex(wx, y + topH, wz, 0, 1, 0, 1)
@@ -214,12 +214,38 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
             if (f === 2) continue
             const fd = FACES[f]
             const nb = sample(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
-            if (nb === B.WATER || OPAQUE[nb] || (nb !== B.AIR && !CROSS[nb])) continue
+            if (isWater(nb) || OPAQUE[nb] || (nb !== B.AIR && !CROSS[nb] && !isLava(nb))) continue
             for (let ci = 0; ci < 4; ci++) {
               const cc = fd.c[ci]
               water.vertex(wx + cc[0], y + cc[1] * topH, wz + cc[2], fd.n[0], fd.n[1], fd.n[2], 0)
             }
             water.quad()
+          }
+          continue
+        }
+
+
+        if (isLava(id)) {
+          const above = sample(wx, y + 1, wz)
+          const surface = !isLava(above)
+          const topH = surface ? WATER_SURFACE * (8 - fluidLevel(id)) / 8 : 1
+          const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 0))
+          for (let f = 0; f < 6; f++) {
+            if (f === 2 && !surface) continue
+            const fd = FACES[f]
+            const nb = sample(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
+            if (f !== 2 && (isLava(nb) || OPAQUE[nb] || (nb !== B.AIR && !CROSS[nb] && !isWater(nb)))) continue
+            const uvs = fd.uv
+            for (let ci = 0; ci < 4; ci++) {
+              const cc = fd.c[ci]
+              emissive.vertex(
+                wx + cc[0], y + cc[1] * topH, wz + cc[2],
+                fd.n[0], fd.n[1], fd.n[2],
+                uvs[ci][0] === 0 ? u0 : u1, uvs[ci][1] === 0 ? v0 : v1,
+                1, 0.92, 0.72, 0
+              )
+            }
+            emissive.quad(false)
           }
           continue
         }
@@ -231,17 +257,19 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           const [u0, v0, u1, v1] = atlas.uvRect(tile)
           const jx = (hash01(wx, wz, seed ^ 0x71) - 0.5) * 0.3
           const jz = (hash01(wx, wz, seed ^ 0x72) - 0.5) * 0.3
-          const useTint = id === B.TALLGRASS
-          const r = useTint ? tint[0] * 1.35 : 1
-          const g = useTint ? tint[1] * 1.35 : 1
-          const bcol = useTint ? tint[2] * 1.35 : 1
+          const useTint = id === B.TALLGRASS || id === B.FERN
+          const light = world.getLightLevel(wx, y, wz)
+          const lightFactor = 0.28 + 0.72 * light / 15
+          const r = (useTint ? tint[0] * 1.35 : 1) * lightFactor
+          const g = (useTint ? tint[1] * 1.35 : 1) * lightFactor
+          const bcol = (useTint ? tint[2] * 1.35 : 1) * lightFactor
           const x0 = wx + 0.14 + jx, x1 = wx + 0.86 + jx
           const z0 = wz + 0.14 + jz, z1 = wz + 0.86 + jz
           const quads: [number, number, number, number][] = [
             [x0, z0, x1, z1],
             [x0, z1, x1, z0]
           ]
-          const crossTarget = id === B.TORCH ? emissive : foliage
+          const crossTarget = id === B.TORCH || id === B.FIRE ? emissive : foliage
           for (const [qx0, qz0, qx1, qz1] of quads) {
             crossTarget.vertex(qx0, y, qz0, 0, 1, 0, u0, v0, r * 0.85, g * 0.85, bcol * 0.85, 0)
             crossTarget.vertex(qx1, y, qz1, 0, 1, 0, u1, v0, r * 0.85, g * 0.85, bcol * 0.85, 0)
@@ -252,7 +280,33 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           continue
         }
 
-        const isLeaf = id === B.LEAVES || id === B.PINELEAVES
+        if (id === B.RAIL) {
+          // flat quad hovering just above the floor, oriented by neighbor rails
+          const alongX = sample(wx + 1, y, wz) === B.RAIL || sample(wx - 1, y, wz) === B.RAIL
+          const alongZ = sample(wx, y, wz + 1) === B.RAIL || sample(wx, y, wz - 1) === B.RAIL
+          const tile = alongX && alongZ ? TILE.RAIL_CURVED : TILE.RAIL
+          const [u0, v0, u1, v1] = atlas.uvRect(tile)
+          const light = world.getLightLevel(wx, y, wz)
+          const lightFactor = 0.28 + 0.72 * light / 15
+          const ry = y + 0.0625
+          // rotate the texture 90° when the track runs along X
+          const uvs: [number, number][] = alongX && !alongZ
+            ? [[u0, v1], [u0, v0], [u1, v1], [u1, v0]]
+            : [[u0, v0], [u1, v0], [u0, v1], [u1, v1]]
+          foliage.vertex(wx, ry, wz, 0, 1, 0, uvs[0][0], uvs[0][1], lightFactor, lightFactor, lightFactor, 0)
+          foliage.vertex(wx + 1, ry, wz, 0, 1, 0, uvs[1][0], uvs[1][1], lightFactor, lightFactor, lightFactor, 0)
+          foliage.vertex(wx, ry, wz + 1, 0, 1, 0, uvs[2][0], uvs[2][1], lightFactor, lightFactor, lightFactor, 0)
+          foliage.vertex(wx + 1, ry, wz + 1, 0, 1, 0, uvs[3][0], uvs[3][1], lightFactor, lightFactor, lightFactor, 0)
+          foliage.quad(false)
+          continue
+        }
+
+        if (isBedBlock(id)) {
+          addBedBlock(solid, world, atlas, wx, y, wz, id)
+          continue
+        }
+
+        const isLeaf = isLeafBlock(id)
         const target = isLeaf ? foliage : id === B.GLASS ? glass : solid
         const facing = world.getBlockFacing(wx, y, wz)
         // subtle per-block value variation breaks up flat regions
@@ -276,6 +330,9 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
             const lv = 0.85 + hash301(wx >> 2, y >> 2, wz >> 2, seed ^ 0x1eaf) * 0.3
             tr *= lv; tg *= lv; tb *= lv * 0.95
           }
+          const light = world.getLightLevel(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
+          const lightFactor = 0.28 + 0.72 * light / 15
+          tr *= lightFactor; tg *= lightFactor; tb *= lightFactor
 
           // ambient occlusion per corner
           const ao: number[] = []
@@ -334,6 +391,75 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
     chest: chest.build(),
     largeChest: largeChest.build(),
     xray: xray.build(false)
+  }
+}
+
+/** Beds render as 9/16-tall boxes with facing-rotated top textures. */
+function addBedBlock(
+  builder: GeomBuilder,
+  world: World,
+  atlas: Atlas,
+  wx: number,
+  y: number,
+  wz: number,
+  id: number
+): void {
+  const facing = world.getBlockFacing(wx, y, wz)
+  const h = 0.5625
+  const light = world.getLightLevel(wx, y + 1, wz)
+  const lf = 0.28 + 0.72 * light / 15
+
+  const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 2, facing))
+  // orient the top texture so its v axis runs along the foot→head direction
+  const topUv: Record<number, [number, number][]> = {
+    4: [[u0, v0], [u0, v1], [u1, v0], [u1, v1]],
+    5: [[u0, v1], [u0, v0], [u1, v1], [u1, v0]],
+    0: [[u0, v0], [u1, v0], [u0, v1], [u1, v1]],
+    1: [[u0, v1], [u1, v1], [u0, v0], [u1, v0]]
+  }
+  const tuv = topUv[facing] ?? topUv[4]
+  const topCorners = [[0, 0], [0, 1], [1, 0], [1, 1]] as const
+  for (let ci = 0; ci < 4; ci++) {
+    builder.vertex(
+      wx + topCorners[ci][0], y + h, wz + topCorners[ci][1],
+      0, 1, 0, tuv[ci][0], tuv[ci][1], lf, lf, lf, 0
+    )
+  }
+  builder.quad(false)
+
+  for (const f of [0, 1, 4, 5] as const) {
+    const fd = FACES[f]
+    const nb = world.getBlock(wx + fd.n[0], y, wz + fd.n[2])
+    if (isBedBlock(nb)) continue
+    const [su0, sv0, su1, sv1] = atlas.uvRect(tileFor(id, f, facing))
+    const vLo = sv0, vHi = sv0 + (sv1 - sv0) * h
+    for (let ci = 0; ci < 4; ci++) {
+      const cc = fd.c[ci]
+      const uv = fd.uv[ci]
+      builder.vertex(
+        wx + cc[0], y + cc[1] * h, wz + cc[2],
+        fd.n[0], fd.n[1], fd.n[2],
+        uv[0] === 0 ? su0 : su1,
+        uv[1] === 0 ? vLo : vHi,
+        lf * 0.85, lf * 0.85, lf * 0.85, 0
+      )
+    }
+    builder.quad(false)
+  }
+
+  if (!OPAQUE[world.getBlock(wx, y - 1, wz)]) {
+    const fd = FACES[3]
+    const [bu0, bv0, bu1, bv1] = atlas.uvRect(tileFor(id, 3, facing))
+    for (let ci = 0; ci < 4; ci++) {
+      const cc = fd.c[ci]
+      const uv = fd.uv[ci]
+      builder.vertex(
+        wx + cc[0], y, wz + cc[2], 0, -1, 0,
+        uv[0] === 0 ? bu0 : bu1, uv[1] === 0 ? bv0 : bv1,
+        lf * 0.6, lf * 0.6, lf * 0.6, 0
+      )
+    }
+    builder.quad(false)
   }
 }
 

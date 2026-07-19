@@ -26,11 +26,36 @@ export class ItemSprites {
     const image = await loadSheet()
     ctx.drawImage(image, 0, 0, SHEET, SHEET)
 
+    // Mutton has no classic sprite: paint tinted porkchop copies into unused cells.
+    this.paintTintedCopy(ctx, [7, 5], [0, 9], '#d4453f')  // raw mutton — redder meat
+    this.paintTintedCopy(ctx, [8, 5], [1, 9], '#b4763c')  // cooked mutton — browner roast
+
     this.texture = new THREE.CanvasTexture(this.canvas)
     this.texture.colorSpace = THREE.SRGBColorSpace
     this.texture.magFilter = THREE.NearestFilter
     this.texture.minFilter = THREE.NearestFilter
     this.texture.generateMipmaps = false
+  }
+
+  /** Copies one 16x16 cell to another with a multiplied color tint, keeping alpha. */
+  private paintTintedCopy(
+    ctx: CanvasRenderingContext2D,
+    from: readonly [number, number],
+    to: readonly [number, number],
+    color: string
+  ): void {
+    const cell = document.createElement('canvas')
+    cell.width = cell.height = TS
+    const cellCtx = cell.getContext('2d')!
+    cellCtx.imageSmoothingEnabled = false
+    cellCtx.drawImage(this.canvas, from[0] * TS, from[1] * TS, TS, TS, 0, 0, TS, TS)
+    cellCtx.globalCompositeOperation = 'multiply'
+    cellCtx.fillStyle = color
+    cellCtx.fillRect(0, 0, TS, TS)
+    cellCtx.globalCompositeOperation = 'destination-in'
+    cellCtx.drawImage(this.canvas, from[0] * TS, from[1] * TS, TS, TS, 0, 0, TS, TS)
+    ctx.clearRect(to[0] * TS, to[1] * TS, TS, TS)
+    ctx.drawImage(cell, to[0] * TS, to[1] * TS)
   }
 
   uvRect(column: number, row: number): [number, number, number, number] {

@@ -1,36 +1,107 @@
 import { clamp } from '../util/math'
+import type { MobKind } from '../entities/EntityTypes'
 
 const SOUND_ROOT = `${import.meta.env.BASE_URL}assets/minecraft/sound/`
 const STEP_KINDS = ['cloth', 'grass', 'gravel', 'sand', 'snow', 'stone', 'wood'] as const
+export type MobEvent = 'ambient' | 'hurt' | 'death' | 'step' | 'egg' | 'fuse'
+
+function numberedPaths(prefix: string, count: number): string[] {
+  return Array.from({ length: count }, (_, index) => `${prefix}${index + 1}.ogg`)
+}
 
 function stepPaths(kind: typeof STEP_KINDS[number]): string[] {
-  return [1, 2, 3, 4].map(index => `step/${kind}${index}.ogg`)
+  return numberedPaths(`step/${kind}`, 4)
+}
+
+const MOB_SOUNDS: Record<MobKind, Record<MobEvent, readonly string[]>> = {
+  pig: {
+    ambient: numberedPaths('mob/pig/say', 3),
+    hurt: numberedPaths('mob/pig/say', 3),
+    death: ['mob/pig/death.ogg'],
+    step: numberedPaths('mob/pig/step', 5),
+    egg: [], fuse: []
+  },
+  cow: {
+    ambient: numberedPaths('mob/cow/say', 4),
+    hurt: numberedPaths('mob/cow/hurt', 3),
+    death: numberedPaths('mob/cow/hurt', 3),
+    step: numberedPaths('mob/cow/step', 4),
+    egg: [], fuse: []
+  },
+  mooshroom: {
+    ambient: numberedPaths('mob/cow/say', 4),
+    hurt: numberedPaths('mob/cow/hurt', 3),
+    death: numberedPaths('mob/cow/hurt', 3),
+    step: numberedPaths('mob/cow/step', 4),
+    egg: [], fuse: []
+  },
+  villager: {
+    ambient: [], hurt: [], death: [], step: stepPaths('stone'), egg: [], fuse: []
+  },
+  sheep: {
+    ambient: numberedPaths('mob/sheep/say', 3),
+    hurt: numberedPaths('mob/sheep/say', 3),
+    death: numberedPaths('mob/sheep/say', 3),
+    step: numberedPaths('mob/sheep/step', 5),
+    egg: [], fuse: []
+  },
+  chicken: {
+    ambient: numberedPaths('mob/chicken/say', 3),
+    hurt: numberedPaths('mob/chicken/hurt', 2),
+    death: numberedPaths('mob/chicken/hurt', 2),
+    step: numberedPaths('mob/chicken/step', 2),
+    egg: ['mob/chicken/plop.ogg'], fuse: []
+  },
+  zombie: {
+    ambient: numberedPaths('mob/zombie/say', 3), hurt: numberedPaths('mob/zombie/hurt', 2),
+    death: ['mob/zombie/death.ogg'], step: stepPaths('stone'), egg: [], fuse: []
+  },
+  skeleton: {
+    ambient: numberedPaths('mob/skeleton/say', 3), hurt: numberedPaths('mob/skeleton/hurt', 4),
+    death: ['mob/skeleton/death.ogg'], step: stepPaths('stone'), egg: [], fuse: []
+  },
+  spider: {
+    ambient: numberedPaths('mob/spider/say', 4), hurt: numberedPaths('mob/spider/say', 4),
+    death: ['mob/spider/death.ogg'], step: numberedPaths('mob/spider/say', 4), egg: [], fuse: []
+  },
+  creeper: {
+    ambient: numberedPaths('mob/creeper/say', 4), hurt: numberedPaths('mob/creeper/say', 4),
+    death: ['mob/creeper/death.ogg'], step: stepPaths('stone'), egg: [], fuse: ['random/fuse.ogg']
+  },
+  slime: {
+    ambient: numberedPaths('mob/slime/say', 5), hurt: numberedPaths('mob/slime/say', 5),
+    death: numberedPaths('mob/slime/say', 5), step: numberedPaths('mob/slime/say', 5), egg: [], fuse: []
+  },
+  enderman: {
+    ambient: numberedPaths('mob/enderman/idle', 5), hurt: numberedPaths('mob/enderman/hit', 4),
+    death: ['mob/enderman/death.ogg'], step: stepPaths('stone'), egg: [], fuse: []
+  }
 }
 
 const SOUND_FILES = [
   ...STEP_KINDS.flatMap(stepPaths),
   'damage/fallbig1.ogg', 'damage/fallbig2.ogg', 'damage/fallsmall.ogg',
   'damage/hurtflesh1.ogg', 'damage/hurtflesh2.ogg', 'damage/hurtflesh3.ogg',
-  'liquid/splash.ogg', 'random/pop.ogg', 'random/click.ogg',
+  'liquid/splash.ogg', 'random/pop.ogg', 'random/click.ogg', 'random/break.ogg',
+  'random/bow.ogg', 'random/chestopen.ogg', 'random/fuse.ogg', 'random/orb.ogg',
+  ...numberedPaths('random/eat', 3), ...numberedPaths('random/explode', 4),
+  'music/calm1.ogg', 'music/calm2.ogg', 'music/calm3.ogg',
   'ambient/weather/rain1.ogg', 'ambient/weather/rain2.ogg',
   'ambient/weather/rain3.ogg', 'ambient/weather/rain4.ogg',
-  'ambient/weather/thunder1.ogg', 'ambient/weather/thunder2.ogg', 'ambient/weather/thunder3.ogg'
+  'ambient/weather/thunder1.ogg', 'ambient/weather/thunder2.ogg', 'ambient/weather/thunder3.ogg',
+  ...Object.values(MOB_SOUNDS).flatMap(events => Object.values(events).flat())
 ] as const
 
-/** Classic client samples with synthesized fallbacks and ambient wind/birds. */
+/** Original classic Minecraft samples only; no synthesized sound fallbacks. */
 export class AudioMan {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
   private lowpass: BiquadFilterNode | null = null
-  private noiseBuf: AudioBuffer | null = null
-  private windGain: GainNode | null = null
   private rainGain: GainNode | null = null
-  private classicRainGain: GainNode | null = null
   private samples = new Map<string, AudioBuffer>()
   private volume = 0.8
-  private birdTimer = 3
-  private windTarget = 0.1
   private rainTarget = 0
+  private musicTimer = 30 + Math.random() * 90
 
   get ready(): boolean { return this.ctx !== null }
 
@@ -39,7 +110,6 @@ export class AudioMan {
     if (this.ctx) return
     const ctx = new AudioContext()
     this.ctx = ctx
-
     this.lowpass = ctx.createBiquadFilter()
     this.lowpass.type = 'lowpass'
     this.lowpass.frequency.value = 20000
@@ -47,32 +117,21 @@ export class AudioMan {
     this.master.gain.value = this.volume
     this.master.connect(this.lowpass)
     this.lowpass.connect(ctx.destination)
-
-    // 2 seconds of white noise, reused by every noise-based sound
-    const len = ctx.sampleRate * 2
-    this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate)
-    const data = this.noiseBuf.getChannelData(0)
-    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1
-
-    // looping wind
-    this.windGain = this.makeLoop(400, 0.08)
-    // looping rain (brighter noise)
-    this.rainGain = this.makeLoop(5200, 0, 900)
     void this.loadSamples()
   }
 
   private async loadSamples(): Promise<void> {
     if (!this.ctx) return
-    await Promise.all(SOUND_FILES.map(async path => {
+    await Promise.all([...new Set(SOUND_FILES)].map(async path => {
       try {
         const response = await fetch(SOUND_ROOT + path)
         if (!response.ok) return
         const buffer = await this.ctx!.decodeAudioData(await response.arrayBuffer())
         this.samples.set(path, buffer)
-      } catch { /* synthesized fallback remains available */ }
+      } catch { /* Missing samples stay silent instead of being synthesized. */ }
     }))
     const rain = this.samples.get('ambient/weather/rain1.ogg')
-    if (rain && this.ctx && this.master && !this.classicRainGain) {
+    if (rain && this.ctx && this.master && !this.rainGain) {
       const source = this.ctx.createBufferSource()
       source.buffer = rain
       source.loop = true
@@ -81,8 +140,7 @@ export class AudioMan {
       source.connect(gain)
       gain.connect(this.master)
       source.start()
-      this.classicRainGain = gain
-      if (this.rainGain) this.rainGain.gain.value = 0
+      this.rainGain = gain
     }
   }
 
@@ -112,247 +170,121 @@ export class AudioMan {
     return 'stone'
   }
 
-  private makeLoop(freq: number, gain: number, highpass = 0): GainNode {
-    const ctx = this.ctx!
-    const src = ctx.createBufferSource()
-    src.buffer = this.noiseBuf
-    src.loop = true
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'lowpass'
-    filter.frequency.value = freq
-    const g = ctx.createGain()
-    g.gain.value = gain
-    src.connect(filter)
-    let tail: AudioNode = filter
-    if (highpass > 0) {
-      const hp = ctx.createBiquadFilter()
-      hp.type = 'highpass'
-      hp.frequency.value = highpass
-      filter.connect(hp)
-      tail = hp
-    }
-    tail.connect(g)
-    g.connect(this.master!)
-    src.start()
-    return g
+  setVolume(value: number): void {
+    this.volume = value
+    if (this.master) this.master.gain.value = value
   }
 
-  setVolume(v: number): void {
-    this.volume = v
-    if (this.master) this.master.gain.value = v
-  }
-
-  setUnderwater(under: boolean): void {
+  setUnderwater(underwater: boolean): void {
     if (!this.lowpass || !this.ctx) return
-    this.lowpass.frequency.setTargetAtTime(under ? 620 : 20000, this.ctx.currentTime, 0.1)
+    this.lowpass.frequency.setTargetAtTime(underwater ? 620 : 20000, this.ctx.currentTime, 0.1)
   }
 
-  /** Filtered noise burst — the workhorse for impacts and steps. */
-  private burst(opts: {
-    dur: number; gain: number; type?: BiquadFilterType; freq: number; q?: number
-    attack?: number; freqEnd?: number; delay?: number
-  }): void {
-    if (!this.ctx || !this.master) return
-    const ctx = this.ctx
-    const t0 = ctx.currentTime + (opts.delay ?? 0)
-    const src = ctx.createBufferSource()
-    src.buffer = this.noiseBuf
-    src.loop = true
-    src.playbackRate.value = 0.9 + Math.random() * 0.2
-    const f = ctx.createBiquadFilter()
-    f.type = opts.type ?? 'lowpass'
-    f.frequency.setValueAtTime(opts.freq, t0)
-    if (opts.freqEnd) f.frequency.exponentialRampToValueAtTime(Math.max(30, opts.freqEnd), t0 + opts.dur)
-    f.Q.value = opts.q ?? 0.8
-    const g = ctx.createGain()
-    const attack = opts.attack ?? 0.004
-    g.gain.setValueAtTime(0, t0)
-    g.gain.linearRampToValueAtTime(opts.gain, t0 + attack)
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + opts.dur)
-    src.connect(f); f.connect(g); g.connect(this.master)
-    src.start(t0, Math.random())
-    src.stop(t0 + opts.dur + 0.05)
-  }
-
-  private thump(freq: number, gain: number, dur = 0.09, delay = 0): void {
-    if (!this.ctx || !this.master) return
-    const ctx = this.ctx
-    const t0 = ctx.currentTime + delay
-    const o = ctx.createOscillator()
-    o.type = 'sine'
-    o.frequency.setValueAtTime(freq, t0)
-    o.frequency.exponentialRampToValueAtTime(Math.max(24, freq * 0.5), t0 + dur)
-    const g = ctx.createGain()
-    g.gain.setValueAtTime(gain, t0)
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur)
-    o.connect(g); g.connect(this.master)
-    o.start(t0)
-    o.stop(t0 + dur + 0.02)
-  }
-
-  footstep(cat: string, sprint = false): void {
-    if (cat === 'water') {
-      if (this.sample('liquid/splash.ogg', sprint ? 0.16 : 0.1, 1.35 + Math.random() * 0.15)) return
-    } else if (this.sample(stepPaths(this.stepKind(cat)), sprint ? 0.22 : 0.15, 0.9 + Math.random() * 0.2)) return
-    const v = (sprint ? 0.16 : 0.11) * (0.85 + Math.random() * 0.3)
-    switch (cat) {
-      case 'grass':
-      case 'leaf':
-        this.burst({ dur: 0.09, gain: v, freq: 700, freqEnd: 250 }); break
-      case 'dirt':
-        this.burst({ dur: 0.1, gain: v, freq: 420, freqEnd: 180 }); break
-      case 'sand':
-        this.burst({ dur: 0.14, gain: v * 0.9, type: 'bandpass', freq: 1400, q: 0.5 }); break
-      case 'snow':
-        this.burst({ dur: 0.07, gain: v, freq: 500, freqEnd: 240 })
-        this.burst({ dur: 0.06, gain: v * 0.6, freq: 380, delay: 0.035 }); break
-      case 'wood':
-        this.thump(140, v * 1.1, 0.07)
-        this.burst({ dur: 0.05, gain: v * 0.5, freq: 900 }); break
-      case 'water':
-        this.burst({ dur: 0.16, gain: v, type: 'bandpass', freq: 1100, q: 1.4, freqEnd: 500 }); break
-      default:
-        this.burst({ dur: 0.07, gain: v * 0.9, type: 'bandpass', freq: 1600, q: 1.2, freqEnd: 700 })
+  footstep(category: string, sprint = false): void {
+    if (category === 'water') {
+      this.sample('liquid/splash.ogg', sprint ? 0.16 : 0.1, 1.35 + Math.random() * 0.15)
+    } else {
+      this.sample(stepPaths(this.stepKind(category)), sprint ? 0.22 : 0.15, 0.9 + Math.random() * 0.2)
     }
   }
 
-  breakBlock(cat: string): void {
-    if (this.sample(stepPaths(this.stepKind(cat)), 0.52, 0.72 + Math.random() * 0.12)) return
-    switch (cat) {
-      case 'stone':
-        this.burst({ dur: 0.22, gain: 0.32, type: 'bandpass', freq: 1300, q: 0.7, freqEnd: 300 })
-        this.thump(90, 0.22, 0.1); break
-      case 'wood':
-        this.thump(110, 0.32, 0.12)
-        this.burst({ dur: 0.18, gain: 0.2, freq: 800, freqEnd: 200 }); break
-      case 'sand':
-      case 'snow':
-        this.burst({ dur: 0.24, gain: 0.28, freq: 1000, freqEnd: 260 }); break
-      case 'leaf':
-        this.burst({ dur: 0.16, gain: 0.22, type: 'highpass', freq: 900 }); break
-      default:
-        this.burst({ dur: 0.2, gain: 0.3, freq: 700, freqEnd: 200 })
-        this.thump(70, 0.16, 0.09)
-    }
+  breakBlock(category: string): void {
+    this.sample(stepPaths(this.stepKind(category)), 0.52, 0.72 + Math.random() * 0.12)
   }
 
-  /** Crunchy tick while mining. */
-  mineTick(cat: string): void {
-    if (this.sample(stepPaths(this.stepKind(cat)), 0.09, 0.65 + Math.random() * 0.08)) return
-    const freq = cat === 'stone' ? 1800 : cat === 'wood' ? 1000 : 800
-    this.burst({ dur: 0.045, gain: 0.09, type: 'bandpass', freq, q: 1.6 })
+  mineTick(category: string): void {
+    this.sample(stepPaths(this.stepKind(category)), 0.09, 0.65 + Math.random() * 0.08)
   }
 
-  placeBlock(cat: string): void {
-    if (this.sample(stepPaths(this.stepKind(cat)), 0.38, 0.78 + Math.random() * 0.08)) return
-    this.thump(cat === 'stone' ? 120 : 150, 0.24, 0.07)
-    this.burst({ dur: 0.07, gain: 0.14, freq: 1000, freqEnd: 400 })
+  placeBlock(category: string): void {
+    this.sample(stepPaths(this.stepKind(category)), 0.38, 0.78 + Math.random() * 0.08)
   }
 
   jump(): void {
-    // Classic Minecraft has no separate jump sample; landing/steps provide feedback.
+    // Classic Minecraft has no separate jump sample.
   }
 
   land(hard: boolean): void {
-    if (this.sample(hard
+    this.sample(hard
       ? ['damage/fallbig1.ogg', 'damage/fallbig2.ogg']
-      : 'damage/fallsmall.ogg', hard ? 0.58 : 0.34, 0.95 + Math.random() * 0.08)) return
-    this.thump(hard ? 70 : 100, hard ? 0.3 : 0.14, hard ? 0.14 : 0.08)
-    this.burst({ dur: 0.08, gain: hard ? 0.16 : 0.08, freq: 500, freqEnd: 200 })
+      : 'damage/fallsmall.ogg', hard ? 0.58 : 0.34, 0.95 + Math.random() * 0.08)
   }
 
   splash(big = true): void {
-    if (this.sample('liquid/splash.ogg', big ? 0.55 : 0.28, big ? 0.9 : 1.2)) return
-    this.burst({ dur: big ? 0.5 : 0.25, gain: big ? 0.34 : 0.18, type: 'bandpass', freq: 900, q: 0.6, freqEnd: 2600, attack: 0.02 })
+    this.sample('liquid/splash.ogg', big ? 0.55 : 0.28, big ? 0.9 : 1.2)
   }
 
   swimStroke(): void {
-    if (this.sample('liquid/splash.ogg', 0.08, 1.45 + Math.random() * 0.15)) return
-    this.burst({ dur: 0.22, gain: 0.08, type: 'bandpass', freq: 700, q: 1, freqEnd: 1400, attack: 0.05 })
+    this.sample('liquid/splash.ogg', 0.08, 1.45 + Math.random() * 0.15)
   }
 
   thunder(delay: number): void {
-    if (this.sample(
+    this.sample(
       ['ambient/weather/thunder1.ogg', 'ambient/weather/thunder2.ogg', 'ambient/weather/thunder3.ogg'],
       0.8,
       0.9 + Math.random() * 0.15,
       delay
-    )) return
-    if (!this.ctx || !this.master) return
-    const dist = clamp(delay / 3, 0.15, 1)
-    this.burst({ dur: 2.6, gain: 0.5 * (1.2 - dist), freq: 160, freqEnd: 45, attack: 0.02, delay })
-    this.burst({ dur: 3.6, gain: 0.3 * (1.2 - dist), freq: 90, freqEnd: 30, attack: 0.4, delay: delay + 0.25 })
-    this.thump(45, 0.35 * (1.2 - dist), 1.6, delay)
+    )
   }
 
   hurt(): void {
-    if (this.sample(
+    this.sample(
       ['damage/hurtflesh1.ogg', 'damage/hurtflesh2.ogg', 'damage/hurtflesh3.ogg'],
       0.62,
       0.92 + Math.random() * 0.16
-    )) return
-    this.burst({ dur: 0.16, gain: 0.3, type: 'bandpass', freq: 850, q: 0.8, freqEnd: 260 })
+    )
   }
 
   pickup(): void {
-    if (this.sample('random/pop.ogg', 0.32, 1.65 + Math.random() * 0.25)) return
-    this.thump(380, 0.12, 0.05)
+    this.sample('random/pop.ogg', 0.32, 1.65 + Math.random() * 0.25)
   }
 
-  /** UI click when the player takes a crafting result. */
   craft(): void {
-    if (this.sample('random/click.ogg', 0.3, 1)) return
-    this.burst({ dur: 0.05, gain: 0.2, type: 'bandpass', freq: 2200, q: 2 })
+    this.sample('random/click.ogg', 0.3)
   }
 
-  /** Snap of a tool reaching zero durability. */
   toolBreak(): void {
-    this.sample('random/click.ogg', 0.4, 0.55)
-    this.burst({ dur: 0.16, gain: 0.3, type: 'bandpass', freq: 1400, q: 1.1, freqEnd: 300 })
-    this.thump(180, 0.2, 0.08)
+    this.sample('random/break.ogg', 0.5, 0.95 + Math.random() * 0.1)
   }
 
-  private chirp(): void {
-    if (!this.ctx || !this.master) return
-    const ctx = this.ctx
-    const notes = 2 + Math.floor(Math.random() * 3)
-    const base = 2400 + Math.random() * 1400
-    for (let i = 0; i < notes; i++) {
-      const t0 = ctx.currentTime + i * (0.09 + Math.random() * 0.06)
-      const o = ctx.createOscillator()
-      o.type = 'sine'
-      o.frequency.setValueAtTime(base * (0.9 + Math.random() * 0.25), t0)
-      o.frequency.exponentialRampToValueAtTime(base * (1.05 + Math.random() * 0.3), t0 + 0.05)
-      const g = ctx.createGain()
-      g.gain.setValueAtTime(0, t0)
-      g.gain.linearRampToValueAtTime(0.028, t0 + 0.015)
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.08)
-      o.connect(g); g.connect(this.master)
-      o.start(t0)
-      o.stop(t0 + 0.1)
-    }
+  explosion(): void {
+    this.sample(numberedPaths('random/explode', 4), 0.78, 0.9 + Math.random() * 0.12)
+  }
+
+  bowShoot(power = 1): void {
+    this.sample('random/bow.ogg', 0.35 + clamp(power, 0, 1) * 0.22, 0.9 + Math.random() * 0.12)
+  }
+
+  eat(): void {
+    this.sample(numberedPaths('random/eat', 3), 0.3, 0.9 + Math.random() * 0.18)
+  }
+
+  chestOpen(): void {
+    this.sample('random/chestopen.ogg', 0.38, 0.96 + Math.random() * 0.08)
+  }
+
+  experience(): void {
+    this.sample('random/orb.ogg', 0.28, 0.9 + Math.random() * 0.45)
+  }
+
+  mob(kind: MobKind, event: MobEvent): void {
+    const gain = event === 'step' ? 0.07
+      : event === 'ambient' ? 0.3
+        : event === 'egg' ? 0.22
+          : event === 'death' ? 0.52 : 0.42
+    const pitch = 0.92 + Math.random() * 0.16
+    this.sample(MOB_SOUNDS[kind][event], gain, pitch)
   }
 
   updateAmbience(dt: number, opts: { wind: number; rain: number; night: number; underwater: boolean; clear: boolean }): void {
-    if (!this.ctx || !this.windGain || !this.rainGain) return
-    this.windTarget = 0.05 + opts.wind * 0.055
     this.rainTarget = opts.underwater ? 0 : opts.rain * 0.2
-    const wg = this.windGain.gain, rg = this.rainGain.gain
-    wg.value += (this.windTarget - wg.value) * clamp(dt * 1.5, 0, 1)
-    const rainNoiseTarget = this.classicRainGain ? 0 : this.rainTarget
-    rg.value += (rainNoiseTarget - rg.value) * clamp(dt * 1.5, 0, 1)
-    if (this.classicRainGain) {
-      const classic = this.classicRainGain.gain
-      classic.value += (this.rainTarget - classic.value) * clamp(dt * 1.5, 0, 1)
-    }
-
-    // occasional birdsong on clear days
-    if (opts.night < 0.3 && opts.clear && !opts.underwater) {
-      this.birdTimer -= dt
-      if (this.birdTimer <= 0) {
-        this.birdTimer = 4 + Math.random() * 9
-        this.chirp()
-      }
+    if (!this.rainGain) return
+    const rain = this.rainGain.gain
+    rain.value += (this.rainTarget - rain.value) * clamp(dt * 1.5, 0, 1)
+    this.musicTimer -= dt
+    if (this.musicTimer <= 0) {
+      this.sample(['music/calm1.ogg', 'music/calm2.ogg', 'music/calm3.ogg'], 0.22)
+      this.musicTimer = 180 + Math.random() * 360
     }
   }
 }

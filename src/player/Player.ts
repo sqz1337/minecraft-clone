@@ -1,9 +1,11 @@
 import * as THREE from 'three'
 import { clamp, lerp } from '../util/math'
-import { B, SOLID, CROSS, SOUND_CAT } from '../world/Blocks'
+import { B, SOLID, CROSS, SOUND_CAT, isWater, isLava, fluidLevel } from '../world/Blocks'
 import type { World } from '../world/World'
 import type { AudioMan } from '../audio/Audio'
 import type { GameMode } from '../core/Settings'
+import { damageAfterArmor } from './Combat'
+import { experienceProgress, spendExperienceLevels } from './Experience'
 
 const HALF = 0.3
 const HEIGHT = 1.8
@@ -32,16 +34,26 @@ export class Player {
   crouching = false
   sprinting = false
   inWater = false
+  inLava = false
   headUnderwater = false
   enabled = false
   headBobEnabled = true
   health = 20
   hunger = 20
+  saturation = 5
   air = 10
   exhaustion = 0
+  armorPoints = 0
+  protectionLevels = 0
+  featherFallingLevel = 0
+  respirationLevel = 0
+  aquaAffinity = false
+  experienceTotal = 0
   onStatsChanged: () => void = () => {}
   onDamage: (amount: number) => void = () => {}
   onDeath: () => void = () => {}
+  onArmorDamaged: () => void = () => {}
+  onExperienceChanged: () => void = () => {}
 
   camera: THREE.PerspectiveCamera
   private world: World
@@ -61,6 +73,12 @@ export class Player {
   private drownTimer = 1
   private hungerTimer = 4
   private regenTimer = 4
+  private fireDamageTimer = 0
+  private hungerEffectTime = 0
+  private poisonTime = 0
+  private poisonTickTimer = 1
+  /** Seconds of lingering burn after leaving fire or lava; water extinguishes it. */
+  private burnTime = 0
   private dead = false
   private hurtTime = 0
   flashlight: THREE.SpotLight
@@ -124,18 +142,22 @@ export class Player {
     return this.flying
   }
 
-  restoreSurvival(health = 20, hunger = 20, air = 10, exhaustion = 0): void {
+  restoreSurvival(health = 20, hunger = 20, saturation = 5, air = 10, exhaustion = 0, experience = 0): void {
     this.health = clamp(health, 1, 20)
     this.hunger = clamp(hunger, 0, 20)
+    this.saturation = clamp(saturation, 0, this.hunger)
     this.air = clamp(air, 0, 10)
     this.exhaustion = Math.max(0, exhaustion)
+    this.experienceTotal = Math.max(0, Math.floor(experience))
     this.dead = false
     this.onStatsChanged()
+    this.onExperienceChanged()
   }
 
   resetAfterDeath(): void {
     this.health = 20
     this.hunger = 20
+    this.saturation = 5
     this.air = 10
     this.exhaustion = 0
     this.dead = false
@@ -147,24 +169,76 @@ export class Player {
     if (this.mode === 'survival' && !this.noclip) this.exhaustion += Math.max(0, amount)
   }
 
-  damage(amount: number): void {
-    if (this.mode !== 'survival' || this.noclip || this.dead || amount <= 0 || this.damageCooldown > 0) return
-    this.health = Math.max(0, this.health - amount)
+  get experienceLevel(): number { return experienceProgress(this.experienceTotal).level }
+  get experienceFraction(): number { return experienceProgress(this.experienceTotal).fraction }
+
+  addExperience(amount: number): void {
+    if (this.mode !== 'survival' || !Number.isFinite(amount) || amount <= 0) return
+    this.experienceTotal += Math.floor(amount)
+    this.onExperienceChanged()
+  }
+
+  setExperience(total: number): void {
+    this.experienceTotal = Math.max(0, Math.floor(Number.isFinite(total) ? total : 0))
+    this.onExperienceChanged()
+  }
+
+  spendExperienceLevels(cost: number): boolean {
+    const remaining = spendExperienceLevels(this.experienceTotal, cost)
+    if (remaining === null) return false
+    this.experienceTotal = remaining
+    this.onExperienceChanged()
+    return true
+  }
+
+  eat(hunger: number, saturationModifier: number): boolean {
+    if (this.mode !== 'survival' || this.dead || this.hunger >= 20) return false
+    this.hunger = Math.min(20, this.hunger + Math.max(0, hunger))
+    this.saturation = Math.min(
+      this.hunger,
+      this.saturation + Math.max(0, hunger * saturationModifier * 2)
+    )
+    this.onStatsChanged()
+    return true
+  }
+
+  /** Lightweight food-borne effects; intentionally separate from the future potion system. */
+  applyFoodEffect(kind: 'hunger' | 'poison', seconds: number): void {
+    if (kind === 'hunger') this.hungerEffectTime = Math.max(this.hungerEffectTime, seconds)
+    else this.poisonTime = Math.max(this.poisonTime, seconds)
+  }
+
+  damage(amount: number, bypassArmor = false): boolean {
+    if (this.mode !== 'survival' || this.noclip || this.dead || amount <= 0 || this.damageCooldown > 0) return false
+    const actual = bypassArmor ? Math.ceil(amount) : damageAfterArmor(amount, this.armorPoints, this.protectionLevels)
+    if (actual <= 0) return false
+    this.health = Math.max(0, this.health - actual)
     this.damageCooldown = 0.55
     this.hurtTime = 1
     this.audio.hurt()
-    this.onDamage(amount)
+    if (!bypassArmor && this.armorPoints > 0) this.onArmorDamaged()
+    this.onDamage(actual)
     this.onStatsChanged()
     if (this.health <= 0) {
       this.dead = true
       this.onDeath()
     }
+    return true
+  }
+
+  knockback(sourceX: number, sourceZ: number, power = 3.2): void {
+    const dx = this.pos.x - sourceX, dz = this.pos.z - sourceZ
+    const length = Math.hypot(dx, dz) || 1
+    this.vel.x += dx / length * power
+    this.vel.z += dz / length * power
+    this.vel.y = Math.max(this.vel.y, Math.min(4, power * 0.55))
   }
 
   setNoclip(enabled: boolean): void {
     this.noclip = enabled
     this.onGround = false
     this.inWater = false
+    this.inLava = false
     this.headUnderwater = false
     this.coyote = 0
     this.jumpBuffer = 0
@@ -226,10 +300,12 @@ export class Player {
 
     // water state
     const feetBlock = this.world.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + 0.4), Math.floor(this.pos.z))
-    this.inWater = !this.noclip && feetBlock === B.WATER
+    this.inWater = !this.noclip && isWater(feetBlock)
+    this.inLava = !this.noclip && isLava(feetBlock)
     const eyeY = this.pos.y + (this.crouching ? EYE_CROUCH : EYE)
     const eyeBlock = this.world.getBlock(Math.floor(this.pos.x), Math.floor(eyeY), Math.floor(this.pos.z))
-    this.headUnderwater = !this.noclip && eyeBlock === B.WATER && (eyeY - Math.floor(eyeY)) < WATER_SURFACE
+    const waterHeight = isWater(eyeBlock) ? WATER_SURFACE * (8 - fluidLevel(eyeBlock)) / 8 : 0
+    this.headUnderwater = !this.noclip && waterHeight > 0 && (eyeY - Math.floor(eyeY)) < waterHeight
 
     if (this.inWater && !this.wasInWater && this.vel.y < -3) {
       this.audio.splash(true)
@@ -289,12 +365,17 @@ export class Player {
     this.onGround = false
 
     for (let s = 0; s < steps; s++) {
+      const sneakHold = this.crouching && wasGround && this.vel.y <= 0 && !this.inWater
       // X
       let nx = this.pos.x + this.vel.x * sdt
       let hit = this.collides(nx, this.pos.y, this.pos.z)
       if (hit) {
         nx = this.vel.x > 0 ? hit.x - HALF - 0.001 : hit.x + 1 + HALF + 0.001
         if (this.inWater && k.has('Space') && this.onGroundOrNear()) this.vel.y = Math.max(this.vel.y, 5.5)
+        this.vel.x = 0
+      } else if (sneakHold && !this.collides(nx, this.pos.y - 0.1, this.pos.z)) {
+        // sneaking never walks off an edge
+        nx = this.pos.x
         this.vel.x = 0
       }
       this.pos.x = nx
@@ -304,6 +385,9 @@ export class Player {
       if (hit) {
         nz = this.vel.z > 0 ? hit.z - HALF - 0.001 : hit.z + 1 + HALF + 0.001
         if (this.inWater && k.has('Space') && this.onGroundOrNear()) this.vel.y = Math.max(this.vel.y, 5.5)
+        this.vel.z = 0
+      } else if (sneakHold && !this.collides(this.pos.x, this.pos.y - 0.1, nz)) {
+        nz = this.pos.z
         this.vel.z = 0
       }
       this.pos.z = nz
@@ -329,7 +413,14 @@ export class Player {
         this.audio.land(impact > 16)
         this.landDip = Math.min(0.3, impact * 0.014)
       }
-      if (impact > 11) this.damage(Math.max(1, Math.ceil((impact - 11) / 2.4)))
+      // classic rule: one damage per block fallen beyond three; feather falling softens it
+      const fallHeight = impact * impact / (2 * GRAVITY)
+      const raw = Math.ceil(fallHeight - 3.05)
+      if (raw > 0 && !this.inWater) {
+        const reduction = Math.min(0.8, Math.max(0, this.featherFallingLevel) * 0.2)
+        const dealt = Math.round(raw * (1 - reduction))
+        if (dealt > 0) this.damage(dealt)
+      }
       this.fallSpeedPeak = 0
     }
     if (this.onGround) {
@@ -384,18 +475,60 @@ export class Player {
     if (this.mode !== 'survival' || this.dead) return
     this.damageCooldown = Math.max(0, this.damageCooldown - dt)
 
+    const bodyBlock = this.world.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + 0.7), Math.floor(this.pos.z))
+    const inLavaNow = this.inLava || isLava(bodyBlock)
+    const inFireNow = bodyBlock === B.FIRE
+    if (inLavaNow) this.burnTime = Math.max(this.burnTime, 6)
+    else if (inFireNow) this.burnTime = Math.max(this.burnTime, 3)
+    if (this.inWater) this.burnTime = 0
+    if (inLavaNow || inFireNow) {
+      this.fireDamageTimer -= dt
+      if (this.fireDamageTimer <= 0) {
+        this.fireDamageTimer = inLavaNow ? 0.65 : 1
+        this.damage(inLavaNow ? 4 : 1, true)
+      }
+    } else if (this.burnTime > 0) {
+      // lingering burn after leaving the fire source
+      this.burnTime = Math.max(0, this.burnTime - dt)
+      this.fireDamageTimer -= dt
+      if (this.fireDamageTimer <= 0) {
+        this.fireDamageTimer = 1
+        this.damage(1, true)
+      }
+    } else {
+      this.fireDamageTimer = 0
+    }
+
     if (!this.noclip) {
       const distance = Math.hypot(this.pos.x - startX, this.pos.z - startZ)
       this.addExhaustion(distance * (this.sprinting ? 0.1 : this.inWater ? 0.04 : 0.01))
     }
-    while (this.exhaustion >= 4 && this.hunger > 0) {
+    while (this.exhaustion >= 4) {
       this.exhaustion -= 4
-      this.hunger = Math.max(0, this.hunger - 1)
+      if (this.saturation > 0) this.saturation = Math.max(0, this.saturation - 1)
+      else if (this.hunger > 0) this.hunger = Math.max(0, this.hunger - 1)
       this.onStatsChanged()
     }
 
+    if (this.hungerEffectTime > 0) {
+      this.hungerEffectTime = Math.max(0, this.hungerEffectTime - dt)
+      this.addExhaustion(dt * 0.2)
+    }
+    if (this.poisonTime > 0) {
+      this.poisonTime = Math.max(0, this.poisonTime - dt)
+      this.poisonTickTimer -= dt
+      if (this.poisonTickTimer <= 0) {
+        this.poisonTickTimer = 1.25
+        if (this.health > 1) {
+          this.health--
+          this.onDamage(1)
+          this.onStatsChanged()
+        }
+      }
+    } else this.poisonTickTimer = 1
+
     if (this.headUnderwater && !this.noclip) {
-      this.air = Math.max(0, this.air - dt)
+      this.air = Math.max(0, this.air - dt / (1 + Math.max(0, this.respirationLevel)))
       if (this.air <= 0) {
         this.drownTimer -= dt
         if (this.drownTimer <= 0) {
@@ -408,7 +541,7 @@ export class Player {
       this.drownTimer = 1
     }
 
-    if (this.hunger <= 0) {
+    if (this.hunger <= 0 && this.health > 1) {
       this.hungerTimer -= dt
       if (this.hungerTimer <= 0) {
         this.hungerTimer = 4

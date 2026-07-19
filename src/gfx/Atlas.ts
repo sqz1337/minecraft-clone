@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 
 const TS = 16
-const GRID = 8
+const GRID = 16
 const ATLAS = TS * GRID
 const TERRAIN_URL = `${import.meta.env.BASE_URL}assets/minecraft/terrain.png`
 const CHEST_URL = `${import.meta.env.BASE_URL}assets/minecraft/item/chest.png`
@@ -46,11 +46,63 @@ const TILE_SOURCES: readonly SourceTile[] = [
   [10, 1],  // chest side
   [9, 1],   // chest top
   [11, 1],  // chest front
-  [13, 3]   // furnace front, lit
+  [13, 3],  // furnace front, lit
+  [7, 5],   // dry farmland
+  [6, 5],   // hydrated farmland (darker soil)
+  [8, 5], [9, 5], [10, 5], [11, 5], // wheat stages 0..3
+  [12, 5], [13, 5], [14, 5], [15, 5], // wheat stages 4..7
+  [9, 4],   // sugar cane
+  [13, 1],  // brown mushroom
+  [12, 1],  // red mushroom
+  [15, 0],  // oak sapling
+  [15, 3],  // spruce sapling
+  [13, 14], // still lava
+  [5, 2],   // obsidian
+  [15, 1],  // fire (placeholder in the sheet; repainted procedurally in build())
+  [8, 0],   // TNT side
+  [9, 0],   // TNT top
+  [10, 0],  // TNT bottom
+  [3, 2],   // bookshelf
+  [6, 10],  // enchanting table top
+  [6, 11],  // enchanting table side
+  [4, 0],   // enchanting table bottom (planks)
+  [0, 4],   // wool
+  [9, 9],   // jungle log side
+  [4, 12],  // jungle leaves
+  [14, 4],  // mycelium top
+  [13, 4],  // mycelium side
+  [13, 8],  // huge mushroom stem
+  [13, 7],  // huge mushroom cap, red
+  [14, 7],  // huge mushroom cap, brown
+  [14, 8],  // huge mushroom pores
+  [8, 3],   // fern
+  [4, 2],   // mossy cobblestone
+  [1, 4],   // mob spawner
+  [6, 3],   // stone brick
+  [4, 6],   // mossy stone brick
+  [5, 6],   // cracked stone brick
+  [0, 8],   // rail, straight
+  [0, 7],   // rail, curved
+  [7, 8],   // bed head top
+  [6, 8],   // bed foot top
+  [8, 9],   // bed head end
+  [7, 9],   // bed head side
+  [5, 9],   // bed foot end
+  [6, 9],   // bed foot side
+  [0, 11],  // sandstone top
+  [0, 12],  // sandstone side
+  [0, 13],  // sandstone bottom
+  [14, 9],  // end portal frame top
+  [15, 9]   // end portal frame side
 ]
 
 const GRASS_SIDE_OVERLAY: SourceTile = [6, 2]
-const CRACK_SOURCES: readonly SourceTile[] = [[0, 15], [3, 15], [6, 15], [9, 15]]
+// Classic terrain.png keeps all ten destroy stages in row 15.
+const CRACK_SOURCES: readonly SourceTile[] = [
+  [0, 15], [1, 15], [2, 15], [3, 15], [4, 15],
+  [5, 15], [6, 15], [7, 15], [8, 15], [9, 15]
+]
+const FIRE_TILE_INDEX = 53
 
 function loadImage(url: string, label: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -115,10 +167,17 @@ export class Atlas {
         ctx.drawImage(this.tintedTerrainTile(terrain, source, '#5f9b45'), ox, oy)
       } else if (tile === 16) {
         ctx.drawImage(this.tintedTerrainTile(terrain, source, '#619961'), ox, oy)
+      } else if (tile === 63) {
+        ctx.drawImage(this.tintedTerrainTile(terrain, source, '#2f9e2f'), ox, oy)
+      } else if (tile === 70) {
+        ctx.drawImage(this.tintedTerrainTile(terrain, source, '#4f8f37'), ox, oy)
       } else {
         this.drawTerrainTile(ctx, terrain, source, ox, oy)
       }
     }
+
+    // The classic sheet only ships a "FIRE TEX" placeholder; paint a pixel flame instead.
+    this.paintFireTile(ctx, (FIRE_TILE_INDEX % GRID) * TS, Math.floor(FIRE_TILE_INDEX / GRID) * TS)
 
     const atlasData = ctx.getImageData(0, 0, ATLAS, ATLAS).data
     for (let tile = 0; tile < TILE_SOURCES.length; tile++) {
@@ -150,6 +209,34 @@ export class Atlas {
       configurePixelTexture(texture)
       this.crackTex.push(texture)
     }
+  }
+
+  /** Deterministic 16x16 pixel flame: solid red-orange base thinning into yellow tongues. */
+  private paintFireTile(ctx: CanvasRenderingContext2D, ox: number, oy: number): void {
+    const image = ctx.createImageData(TS, TS)
+    const data = image.data
+    const hash = (x: number, y: number): number => {
+      let h = Math.imul(x + 1, 0x9e3779b1) ^ Math.imul(y + 1, 0x85ebca6b)
+      h ^= h >>> 13
+      h = Math.imul(h, 0xc2b2ae35)
+      return ((h ^= h >>> 16) >>> 0) / 4294967296
+    }
+    for (let y = 0; y < TS; y++) {
+      for (let x = 0; x < TS; x++) {
+        // 0 at the base of the flame, 1 at the top
+        const up = 1 - (y + 0.5) / TS
+        const wobble = Math.sin(x * 1.9) * 0.09 + (hash(x, y) - 0.5) * 0.55
+        const intensity = 1.15 - up * 1.35 + wobble
+        const i = (y * TS + x) * 4
+        if (intensity <= 0.12) continue
+        const hot = Math.min(1, intensity)
+        data[i] = 255
+        data[i + 1] = Math.round(60 + hot * 160)
+        data[i + 2] = Math.round(hot > 0.85 ? 60 + (hot - 0.85) * 500 : 20)
+        data[i + 3] = 255
+      }
+    }
+    ctx.putImageData(image, ox, oy)
   }
 
   private drawTerrainTile(

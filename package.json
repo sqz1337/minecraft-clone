@@ -6,6 +6,7 @@
   "scripts": {
     "textures:install": "bash scripts/install-minecraft-textures.sh",
     "dev": "vite",
+    "test": "node --test tests/*.test.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

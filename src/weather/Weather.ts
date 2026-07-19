@@ -40,7 +40,8 @@ export class Weather {
     return this.kind
   }
 
-  displayName(cold: boolean): string {
+  displayName(cold: boolean, dry = false): string {
+    if (dry && (this.kind === 'rain' || this.kind === 'storm')) return 'Dry overcast'
     if (this.kind === 'rain' && cold) return 'Snow'
     if (this.kind === 'storm' && cold) return 'Blizzard'
     return this.kind.charAt(0).toUpperCase() + this.kind.slice(1)
@@ -75,7 +76,7 @@ export class Weather {
     }
   }
 
-  update(dt: number, cold: boolean, audio: AudioMan): void {
+  update(dt: number, cold: boolean, audio: AudioMan, dry = false): void {
     this.nextChange -= dt
     if (this.nextChange <= 0) {
       // weighted random transition, biased toward clear-ish weather
@@ -93,8 +94,8 @@ export class Weather {
     o.fogMul = lerp(o.fogMul, t.fogMul, k)
     o.wind = lerp(o.wind, t.wind, k)
     const precip = lerp(o.rain + o.snow, t.precip, k)
-    o.rain = cold ? 0 : precip
-    o.snow = cold ? precip : 0
+    o.rain = dry || cold ? 0 : precip
+    o.snow = dry ? 0 : cold ? precip : 0
     o.wetness = lerp(o.wetness, o.rain > 0.25 ? 1 : 0, clamp(dt * 0.12, 0, 1))
 
     // lightning

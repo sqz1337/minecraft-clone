@@ -22,6 +22,11 @@ export class Chunk {
   readonly cx: number
   readonly cz: number
   blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT)
+  /** Structural daylight and emitted block light, both in the classic 0..15 range. */
+  skyLight = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT)
+  blockLight = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT)
+  /** Sparse positions eligible for random block ticks (crops, soil and plants). */
+  randomTickIndices = new Set<number>()
   /** Per-column biome id and surface height, filled during generation. */
   colBiome = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE)
   colHeight = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE)

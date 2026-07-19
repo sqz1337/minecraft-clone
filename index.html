@@ -94,8 +94,8 @@
         <b>Space</b><span>Jump / Swim up / Fly up</span>
         <b>Shift</b><span>Sprint</span>
         <b>C / Ctrl</b><span>Crouch / Fly down</span>
-        <b>Left Click</b><span>Break block (hold)</span>
-        <b>Right Click</b><span>Place block / use crafting table</span>
+        <b>Left Click</b><span>Break block / attack creature</span>
+        <b>Right Click</b><span>Place / use / eat / draw bow</span>
         <b>Wheel / 1–9</b><span>Select block</span>
         <b>E</b><span>Open inventory (Survival)</span>
         <b>O</b><span>Admin item panel (temporary)</span>
@@ -117,6 +117,7 @@
     <div id="inventory-window" class="inventory-window" role="dialog" aria-label="Inventory">
       <div class="inventory-title"></div>
       <div class="inventory-crafting-title"></div>
+      <div id="inventory-armor" class="inventory-armor" aria-label="Armor slots"></div>
       <div id="inventory-craft" class="inventory-grid inventory-craft"></div>
       <div id="inventory-result" class="craft-result inventory-result"></div>
       <div id="inventory-main" class="inventory-grid inventory-main"></div>
@@ -132,6 +133,16 @@
       <div id="recipe-book" class="mc-panel recipe-book hidden">
         <div class="recipe-book-title"></div>
         <div id="recipe-grid" class="mc-slot-grid recipe-grid"></div>
+      </div>
+      <div id="recipe-preview" class="mc-panel recipe-preview hidden" aria-live="polite">
+        <div id="recipe-preview-name" class="recipe-preview-name"></div>
+        <div class="recipe-preview-craft">
+          <div id="recipe-preview-grid" class="recipe-preview-grid"></div>
+          <div class="recipe-preview-arrow" aria-hidden="true"></div>
+          <div id="recipe-preview-result" class="recipe-preview-result"></div>
+        </div>
+        <div id="recipe-preview-kind" class="recipe-preview-kind"></div>
+        <div id="recipe-preview-status" class="recipe-preview-status"></div>
       </div>
     </div>
     <div id="furnace-window" class="furnace-window hidden" role="dialog" aria-label="Furnace">
@@ -154,6 +165,14 @@
       <div id="chest-main" class="inventory-grid chest-main"></div>
       <div id="chest-hotbar" class="inventory-grid chest-hotbar"></div>
     </div>
+    <div id="enchant-window" class="enchant-window hidden" role="dialog" aria-label="Enchanting Table">
+      <div class="enchant-title"></div>
+      <div class="enchant-power"></div>
+      <div id="enchant-item" class="enchant-item"></div>
+      <div id="enchant-offers" class="enchant-offers"></div>
+      <div id="enchant-main" class="inventory-grid inventory-main"></div>
+      <div id="enchant-hotbar" class="inventory-grid inventory-hotbar"></div>
+    </div>
     <div id="admin-window" class="mc-panel admin-window hidden" role="dialog" aria-label="Admin items">
       <div class="admin-title"></div>
       <div id="admin-grid" class="mc-slot-grid admin-grid"></div>
@@ -168,11 +187,13 @@
     <div id="info"></div>
     <div id="hotbar-wrap">
       <div id="survival-stats" class="hidden">
+        <div id="armor-bar" class="status-row"></div>
         <div id="health-bar" class="status-row"></div>
         <div id="air-bar" class="air-meter hidden"></div>
         <div id="hunger-bar" class="status-row"></div>
       </div>
       <div id="experience-bar" class="hidden"><div id="experience-fill"></div></div>
+      <div id="experience-level"></div>
       <div id="block-name"></div>
       <div id="hotbar"></div>
     </div>
@@ -181,6 +202,10 @@
   <div id="underwater-overlay"></div>
   <div id="damage-overlay"></div>
   <div id="vignette"></div>
+  <div id="map-overlay" class="hidden">
+    <canvas id="map-canvas" width="96" height="96"></canvas>
+    <div id="map-caption"></div>
+  </div>
   <div id="toast" class="hidden"></div>
 
   <script type="module" src="/src/main.ts"></script>

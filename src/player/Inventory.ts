@@ -1,4 +1,5 @@
 import { ITEMS } from '../world/Items'
+import { parseEnchantments, type EnchantmentInstance } from './Enchantments'
 
 export const INVENTORY_SIZE = 36
 export const HOTBAR_SIZE = 9
@@ -8,6 +9,8 @@ export interface ItemStack {
   count: number
   /** Wear of a damageable item (tools); undefined for pristine/stackable items. */
   damage?: number
+  /** Persistent classic enchantment data shared by inventory, equipment and drops. */
+  enchantments?: EnchantmentInstance[]
 }
 
 export type SerializedInventory = Array<ItemStack | null>
@@ -17,13 +20,19 @@ function validStack(value: unknown): value is ItemStack {
   const stack = value as Partial<ItemStack>
   const item = Number.isInteger(stack.id) ? ITEMS[stack.id as number] : null
   if (!item || !Number.isInteger(stack.count) || (stack.count as number) <= 0) return false
-  return stack.damage === undefined || (Number.isInteger(stack.damage) && (stack.damage as number) >= 0)
+  if (stack.damage !== undefined && (!Number.isInteger(stack.damage) || (stack.damage as number) < 0)) return false
+  return stack.enchantments === undefined || parseEnchantments(stack.enchantments, stack.id as number) !== undefined
 }
 
 export function cloneStack(stack: ItemStack): ItemStack {
-  return stack.damage === undefined
-    ? { id: stack.id, count: stack.count }
-    : { id: stack.id, count: stack.count, damage: stack.damage }
+  return {
+    id: stack.id,
+    count: stack.count,
+    ...(stack.damage !== undefined ? { damage: stack.damage } : {}),
+    ...(stack.enchantments?.length
+      ? { enchantments: stack.enchantments.map(enchantment => ({ ...enchantment })) }
+      : {})
+  }
 }
 
 export class Inventory {
@@ -37,7 +46,12 @@ export class Inventory {
         const raw = data[i]
         if (!validStack(raw)) continue
         const max = ITEMS[raw.id]!.stackSize
-        this.slots[i] = cloneStack({ ...raw, count: Math.min(max, raw.count) })
+        const enchantments = parseEnchantments(raw.enchantments, raw.id)
+        this.slots[i] = cloneStack({
+          ...raw,
+          count: Math.min(max, raw.count),
+          ...(enchantments ? { enchantments } : {})
+        })
       }
     }
     this.onChange()
@@ -48,11 +62,11 @@ export class Inventory {
   }
 
   /** Adds items to existing stacks first. Returns the amount that did not fit. */
-  add(id: number, count = 1, damage?: number): number {
+  add(id: number, count = 1, damage?: number, enchantments?: EnchantmentInstance[]): number {
     const item = ITEMS[id]
     if (!item || count <= 0) return count
     let left = count
-    if (item.stackSize > 1 && damage === undefined) {
+    if (item.stackSize > 1 && damage === undefined && !enchantments?.length) {
       for (const stack of this.slots) {
         if (!stack || stack.id !== id || stack.damage !== undefined || stack.count >= item.stackSize) continue
         const moved = Math.min(left, item.stackSize - stack.count)
@@ -64,7 +78,12 @@ export class Inventory {
     for (let i = 0; i < this.slots.length && left > 0; i++) {
       if (this.slots[i]) continue
       const moved = Math.min(left, item.stackSize)
-      this.slots[i] = damage === undefined ? { id, count: moved } : { id, count: moved, damage }
+      this.slots[i] = {
+        id,
+        count: moved,
+        ...(damage !== undefined ? { damage } : {}),
+        ...(enchantments?.length ? { enchantments: enchantments.map(enchantment => ({ ...enchantment })) } : {})
+      }
       left -= moved
     }
     if (left !== count) this.onChange()

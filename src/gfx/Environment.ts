@@ -49,7 +49,8 @@ export class Environment {
 
   /** 0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset */
   timeOfDay = 0.32
-  dayLengthSec = 600
+  /** Classic Minecraft: 24,000 ticks at 20 TPS = 20 real minutes. */
+  dayLengthSec = 1200
   timeScale = 1
   private weather: WeatherOut = {
     cloudCover: 0.3, cloudDark: 0, lightMul: 1, fogMul: 1, rain: 0, snow: 0, wind: 1, wetness: 0

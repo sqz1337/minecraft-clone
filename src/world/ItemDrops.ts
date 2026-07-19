@@ -6,6 +6,7 @@ import type { Inventory } from '../player/Inventory'
 import type { World } from './World'
 import { B, CROSS, SOLID, tileFor } from './Blocks'
 import { ITEMS } from './Items'
+import type { EnchantmentInstance } from '../player/Enchantments'
 
 /** Hard cap for item entities in the world; the oldest drop is culled first. */
 const MAX_DROPS = 200
@@ -16,6 +17,7 @@ interface Drop {
   id: number
   count: number
   damage?: number
+  enchantments?: EnchantmentInstance[]
   mesh: THREE.Mesh
   velocity: THREE.Vector3
   age: number
@@ -26,6 +28,7 @@ export interface SavedDrop {
   id: number
   count: number
   damage?: number
+  enchantments?: EnchantmentInstance[]
   x: number
   y: number
   z: number
@@ -35,6 +38,7 @@ export interface SpawnOptions {
   velocity?: THREE.Vector3
   pickupDelay?: number
   damage?: number
+  enchantments?: EnchantmentInstance[]
 }
 
 export class ItemDrops {
@@ -121,6 +125,7 @@ export class ItemDrops {
       id,
       count,
       damage: options.damage,
+      enchantments: options.enchantments?.map(enchantment => ({ ...enchantment })),
       mesh,
       velocity: options.velocity?.clone() ??
         new THREE.Vector3((Math.random() - 0.5) * 1.5, 2.5, (Math.random() - 0.5) * 1.5),
@@ -143,7 +148,7 @@ export class ItemDrops {
       const drop = this.drops[i]
       drop.age += dt
       drop.velocity.y -= 16 * dt
-      drop.mesh.position.addScaledVector(drop.velocity, dt)
+      this.moveWithWalls(drop, dt)
 
       const bx = Math.floor(drop.mesh.position.x)
       const by = Math.floor(drop.mesh.position.y - 0.15)
@@ -159,7 +164,7 @@ export class ItemDrops {
       drop.mesh.rotation.x = Math.sin(drop.age * 2.2) * 0.12
 
       if (drop.age > drop.pickupDelay && drop.mesh.position.distanceToSquared(player.pos) < 2.6) {
-        const left = this.inventory.add(drop.id, drop.count, drop.damage)
+        const left = this.inventory.add(drop.id, drop.count, drop.damage, drop.enchantments)
         if (left < drop.count) this.onPickup()
         drop.count = left
         if (left === 0) {
@@ -177,15 +182,35 @@ export class ItemDrops {
     }
   }
 
+  private solidAt(x: number, y: number, z: number): boolean {
+    const id = this.world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z))
+    return SOLID[id] && !CROSS[id]
+  }
+
+  /** Per-axis integration so thrown drops stop at walls instead of entering blocks. */
+  private moveWithWalls(drop: Drop, dt: number): void {
+    const pos = drop.mesh.position
+    const midY = pos.y + 0.02
+    const nx = pos.x + drop.velocity.x * dt
+    if (this.solidAt(nx, midY, pos.z)) drop.velocity.x = 0
+    else pos.x = nx
+    const nz = pos.z + drop.velocity.z * dt
+    if (this.solidAt(pos.x, midY, nz)) drop.velocity.z = 0
+    else pos.z = nz
+    const ny = pos.y + drop.velocity.y * dt
+    if (drop.velocity.y > 0 && this.solidAt(pos.x, ny + 0.2, pos.z)) drop.velocity.y = 0
+    else pos.y = ny
+  }
+
   /** Combines nearby identical stackable drops to keep the entity count down. */
   private mergeNearby(): void {
     for (let i = 0; i < this.drops.length; i++) {
       const a = this.drops[i]
       const max = ITEMS[a.id]?.stackSize ?? 1
-      if (max <= 1 || a.damage !== undefined) continue
+      if (max <= 1 || a.damage !== undefined || a.enchantments?.length) continue
       for (let j = this.drops.length - 1; j > i; j--) {
         const b = this.drops[j]
-        if (b.id !== a.id || b.damage !== undefined || a.count + b.count > max) continue
+        if (b.id !== a.id || b.damage !== undefined || b.enchantments?.length || a.count + b.count > max) continue
         if (a.mesh.position.distanceToSquared(b.mesh.position) > MERGE_DISTANCE_SQ) continue
         a.count += b.count
         a.age = Math.min(a.age, b.age)
@@ -199,6 +224,7 @@ export class ItemDrops {
       id: drop.id,
       count: drop.count,
       ...(drop.damage !== undefined ? { damage: drop.damage } : {}),
+      ...(drop.enchantments?.length ? { enchantments: drop.enchantments.map(enchantment => ({ ...enchantment })) } : {}),
       x: drop.mesh.position.x,
       y: drop.mesh.position.y,
       z: drop.mesh.position.z
@@ -206,7 +232,10 @@ export class ItemDrops {
   }
 
   restore(data: readonly SavedDrop[]): void {
-    for (const drop of data) this.spawn(drop.id, drop.x, drop.y, drop.z, drop.count, { damage: drop.damage })
+    for (const drop of data) this.spawn(drop.id, drop.x, drop.y, drop.z, drop.count, {
+      damage: drop.damage,
+      enchantments: drop.enchantments
+    })
   }
 
   private removeAt(index: number): void {

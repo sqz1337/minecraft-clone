@@ -1,6 +1,6 @@
 import { B } from './Blocks'
 import { ITEMS } from './Items'
-import { FURNACE_SMELT_SECONDS, fuelSecondsFor, smeltResultFor } from './Recipes'
+import { FURNACE_SMELT_SECONDS, fuelSecondsFor, smeltResultFor, smeltXpFor } from './Recipes'
 import { cloneStack, ItemStack } from '../player/Inventory'
 import type { World } from './World'
 
@@ -24,6 +24,8 @@ export interface FurnaceState {
   burnTotal: number
   /** Seconds the current input item has been smelting. */
   cook: number
+  /** Experience banked per smelted item, granted when the output is taken. */
+  xp: number
 }
 
 export type ContainerState = ChestState | FurnaceState
@@ -37,6 +39,7 @@ export interface SavedContainer {
   burn?: number
   burnTotal?: number
   cook?: number
+  xp?: number
 }
 
 /**
@@ -68,7 +71,7 @@ export class Containers {
     const key = this.key(x, y, z)
     let state = this.map.get(key)
     if (!state || state.kind !== 'furnace') {
-      state = { kind: 'furnace', slots: Array(3).fill(null), burn: 0, burnTotal: 0, cook: 0 }
+      state = { kind: 'furnace', slots: Array(3).fill(null), burn: 0, burnTotal: 0, cook: 0, xp: 0 }
       this.map.set(key, state)
     }
     return state
@@ -118,6 +121,7 @@ export class Containers {
         const out = f.slots[FURNACE_OUTPUT]
         if (out) out.count += result.count
         else f.slots[FURNACE_OUTPUT] = { id: result.id, count: result.count }
+        f.xp += smeltXpFor(input.id)
         input.count -= 1
         if (input.count === 0) f.slots[FURNACE_INPUT] = null
         changed = true
@@ -139,13 +143,16 @@ export class Containers {
     const saved: SavedContainer[] = []
     for (const [key, state] of this.map) {
       const empty = state.slots.every(stack => !stack)
-      if (empty && (state.kind === 'chest' || state.burn <= 0)) continue
+      if (empty && (state.kind === 'chest' || (state.burn <= 0 && state.xp <= 0))) continue
       const [x, y, z] = key.split(',').map(Number)
       const slots = state.slots.map(stack => stack ? cloneStack(stack) : null)
       if (state.kind === 'chest') {
         saved.push({ x, y, z, kind: 'chest', slots })
       } else {
-        saved.push({ x, y, z, kind: 'furnace', slots, burn: state.burn, burnTotal: state.burnTotal, cook: state.cook })
+        saved.push({
+          x, y, z, kind: 'furnace', slots,
+          burn: state.burn, burnTotal: state.burnTotal, cook: state.cook, xp: state.xp
+        })
       }
     }
     return saved
@@ -170,7 +177,8 @@ export class Containers {
           slots,
           burn: c.burn ?? 0,
           burnTotal: c.burnTotal ?? 0,
-          cook: c.cook ?? 0
+          cook: c.cook ?? 0,
+          xp: c.xp ?? 0
         })
       }
     }

@@ -1,9 +1,10 @@
 import * as THREE from 'three'
 import {
-  B, BLOCKS, HOTBAR_PAGES, SOUND_CAT, CROSS, isContainerBlock, isDirectionalBlock, tileFor,
-  type HorizontalFace
+  B, BLOCKS, HOTBAR_PAGES, SOUND_CAT, CROSS, SOLID, isContainerBlock, isDirectionalBlock, tileFor,
+  isWheat, wheatAge, isFluid, isBedBlock, isLeafBlock, oppositeHorizontalFace, type HorizontalFace
 } from '../world/Blocks'
-import { ITEMS, ItemDefinition, breakInfoFor } from '../world/Items'
+import { ITEMS, ItemDefinition, breakInfoFor, durabilityForItem } from '../world/Items'
+import { I } from '../world/ItemIds'
 import type { GameMode } from '../core/Settings'
 import type { Inventory, ItemStack } from './Inventory'
 import type { ItemDrops } from '../world/ItemDrops'
@@ -13,8 +14,16 @@ import type { Atlas } from '../gfx/Atlas'
 import type { ItemSprites } from '../gfx/ItemSprites'
 import type { AudioMan } from '../audio/Audio'
 import type { Particles } from '../gfx/Particles'
+import type { EntityManager } from '../entities/EntityManager'
+import type { ProjectileManager } from '../entities/ProjectileManager'
+import { ATTACK_COOLDOWN, MELEE_REACH, bowDamage, bowPower, bowPullSprite, bowVelocity, meleeDamage } from './Combat'
+import {
+  enchantmentLevel, fortuneDropCount, sharpnessBonus, shouldConsumeDurability
+} from './Enchantments'
 
-const REACH = 5.5
+const SURVIVAL_REACH = 4.5
+const CREATIVE_REACH = 5.5
+type HandKind = 'block' | 'tool' | 'bow' | 'item'
 
 export class Interaction {
   selected = 0
@@ -27,11 +36,13 @@ export class Interaction {
   private audio: AudioMan
   private particles: Particles
 
-  private highlight: THREE.LineSegments
   private crackMesh: THREE.Mesh
   private crackMat: THREE.MeshBasicMaterial
+  private selectionMesh: THREE.LineSegments
   private hand: THREE.Mesh | null = null
   private handFlat = false
+  private handKind: HandKind = 'item'
+  private handBowStage = -1
   private handSwing = 0
 
   private target: RayHit | null = null
@@ -41,13 +52,24 @@ export class Interaction {
   private placing = false
   private placeCooldown = 0
   private mineTickTimer = 0
+  private eatProgress = 0
+  private attackCooldown = 0
+  private attackingEntity = false
+  private chargingBow = false
+  private bowCharge = 0
 
   onSelectionChanged: (index: number) => void = () => {}
   onPageChanged: (page: number, blocks: readonly number[]) => void = () => {}
-  /** Fired when the player right-clicks a usable block (crafting table, furnace, chest) without crouching. */
+  /** Fired when the player right-clicks a usable block (crafting table, furnace, chest, bed) without crouching. */
   onUseBlock: (hit: RayHit) => void = () => {}
+  /** Fired when the player uses a map item. */
+  onUseMap: () => void = () => {}
+  /** Fired when the player checks a compass or clock. */
+  onUseNavigation: (itemId: number) => void = () => {}
   /** Fired after any block has been broken, with its previous id. */
   onBlockBroken: (x: number, y: number, z: number, id: number) => void = () => {}
+  /** Spawns recoverable XP at a gameplay source such as an ore. */
+  onExperience: (x: number, y: number, z: number, amount: number) => void = () => {}
 
   private rayDir = new THREE.Vector3()
   private rayOrigin = new THREE.Vector3()
@@ -63,7 +85,9 @@ export class Interaction {
     particles: Particles,
     private mode: GameMode,
     private inventory: Inventory,
-    private drops: ItemDrops
+    private drops: ItemDrops,
+    private entities: EntityManager,
+    private projectiles: ProjectileManager
   ) {
     this.world = world
     this.player = player
@@ -73,24 +97,25 @@ export class Interaction {
     this.audio = audio
     this.particles = particles
 
-    const box = new THREE.BoxGeometry(1.002, 1.002, 1.002)
-    this.highlight = new THREE.LineSegments(
-      new THREE.EdgesGeometry(box),
-      new THREE.LineBasicMaterial({ color: 0x0a0a0a, transparent: true, opacity: 0.7 })
-    )
-    this.highlight.visible = false
-    scene.add(this.highlight)
-
     this.crackMat = new THREE.MeshBasicMaterial({
       map: atlas.crackTex[0],
       transparent: true,
       depthWrite: false,
       polygonOffset: true,
-      polygonOffsetFactor: -2
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -4,
+      alphaTest: 0.02
     })
-    this.crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.004, 1.004, 1.004), this.crackMat)
+    this.crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.008, 1.008, 1.008), this.crackMat)
     this.crackMesh.visible = false
+    this.crackMesh.renderOrder = 3
     scene.add(this.crackMesh)
+
+    const selectionGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01))
+    this.selectionMesh = new THREE.LineSegments(selectionGeometry, new THREE.LineBasicMaterial({ color: 0x111111 }))
+    this.selectionMesh.visible = false
+    this.selectionMesh.renderOrder = 4
+    scene.add(this.selectionMesh)
 
     this.buildHand()
   }
@@ -141,27 +166,69 @@ export class Interaction {
     this.setSelected(this.selected + (dir > 0 ? 1 : -1))
   }
 
-  primaryDown(): void { this.breaking = true }
+  primaryDown(): void { this.breaking = true; this.attackingEntity = false }
   primaryUp(): void {
     this.breaking = false
     this.breakProgress = 0
     this.crackMesh.visible = false
+    this.attackingEntity = false
   }
   secondaryDown(): void {
+    if (this.selectedItem?.ranged === 'bow') {
+      this.chargingBow = true
+      this.bowCharge = 0
+      this.placing = false
+      return
+    }
     this.placing = true
     this.placeCooldown = 0
   }
-  secondaryUp(): void { this.placing = false }
+  secondaryUp(): void {
+    if (this.chargingBow) this.releaseBow()
+    this.chargingBow = false
+    this.bowCharge = 0
+    this.placing = false
+    this.eatProgress = 0
+  }
+
+  private releaseBow(): void {
+    const power = bowPower(this.bowCharge)
+    if (power < 0.1 || this.selectedItem?.ranged !== 'bow') return
+    const powerLevel = enchantmentLevel(this.selectedStack, 'power')
+    if (this.mode === 'survival') {
+      const infinity = enchantmentLevel(this.selectedStack, 'infinity') > 0
+      const arrowSlot = this.inventory.slots.findIndex(stack => stack?.id === I.ARROW)
+      if (arrowSlot < 0) return
+      if (!infinity) this.inventory.remove(arrowSlot, 1)
+      this.damageHeldItem()
+    }
+    this.camera.getWorldDirection(this.rayDir)
+    const origin = this.camera.getWorldPosition(this.rayOrigin).addScaledVector(this.rayDir, 0.45)
+    const punch = enchantmentLevel(this.selectedStack, 'punch')
+    const flame = enchantmentLevel(this.selectedStack, 'flame')
+    this.projectiles.shoot(
+      origin,
+      this.rayDir,
+      bowVelocity(power),
+      bowDamage(power, powerLevel),
+      'player',
+      { knockback: 2.8 + punch * 1.6, fireSeconds: flame > 0 ? 5 : 0 }
+    )
+    this.audio.bowShoot(power)
+    this.swing()
+  }
 
   /** Throws one unit of the selected item forward. */
   dropSelected(): void {
     const item = this.selectedItem
     if (!item) return
     let damage: number | undefined
+    let enchantments: ItemStack['enchantments']
     if (this.mode === 'survival') {
       const stack = this.selectedStack
       if (!stack) return
       damage = stack.damage
+      enchantments = stack.enchantments?.map(enchantment => ({ ...enchantment }))
       this.inventory.remove(this.selected, 1)
     }
     this.camera.getWorldDirection(this.rayDir)
@@ -171,7 +238,8 @@ export class Interaction {
     this.drops.spawn(item.id, eye.x + this.rayDir.x * 0.4, eye.y - 0.25, eye.z + this.rayDir.z * 0.4, 1, {
       velocity,
       pickupDelay: 1.2,
-      damage
+      damage,
+      enchantments
     })
     this.swing()
   }
@@ -189,18 +257,15 @@ export class Interaction {
       return
     }
     const id = item.id
-    this.handFlat = !!item.sprite || CROSS[id]
+    this.handKind = item.ranged === 'bow' ? 'bow' : item.tool ? 'tool' : !item.sprite && !CROSS[id] ? 'block' : 'item'
+    this.handFlat = this.handKind !== 'block'
+    this.handBowStage = -1
     let geo: THREE.BufferGeometry
     let mat: THREE.MeshStandardMaterial
     if (item.sprite) {
-      // tools and materials: large flat sprite from items.png held like a tool
-      geo = new THREE.PlaneGeometry(0.42, 0.42)
-      const uv = geo.getAttribute('uv') as THREE.BufferAttribute
-      const [u0, v0, u1, v1] = this.sprites.uvRect(item.sprite[0], item.sprite[1])
-      for (let i = 0; i < uv.count; i++) {
-        uv.setXY(i, uv.getX(i) < 0.5 ? u0 : u1, uv.getY(i) < 0.5 ? v0 : v1)
-      }
-      uv.needsUpdate = true
+      const size = this.handKind === 'item' ? 0.24 : this.handKind === 'bow' ? 0.34 : 0.38
+      geo = new THREE.PlaneGeometry(size, size)
+      this.setHandSpriteUv(geo, item.sprite[0], item.sprite[1])
       mat = new THREE.MeshStandardMaterial({
         map: this.sprites.texture,
         roughness: 1,
@@ -226,7 +291,7 @@ export class Interaction {
         side: THREE.DoubleSide
       })
     } else {
-      geo = new THREE.BoxGeometry(0.16, 0.16, 0.16)
+      geo = new THREE.BoxGeometry(0.28, 0.28, 0.28)
       const uv = geo.getAttribute('uv') as THREE.BufferAttribute
       for (let f = 0; f < 6; f++) {
         const [u0, v0, u1, v1] = this.atlas.uvRect(tileFor(id, f))
@@ -250,12 +315,68 @@ export class Interaction {
         vertexColors: true
       })
     }
+    if (this.selectedStack?.enchantments?.length) {
+      mat.emissive = new THREE.Color(0x5b2c83)
+      mat.emissiveIntensity = 0.32
+    }
     this.hand = new THREE.Mesh(geo, mat)
     this.hand.frustumCulled = false
     this.hand.renderOrder = 5
-    this.hand.position.set(this.handFlat ? 0.31 : 0.3, this.handFlat ? -0.24 : -0.26, -0.55)
-    this.hand.rotation.set(this.handFlat ? 0.04 : 0.12, this.handFlat ? -0.2 : Math.PI / 5, this.handFlat ? -0.28 : 0)
+    this.applyHandPose(0)
+    this.updateBowVisual()
     this.camera.add(this.hand)
+  }
+
+  private setHandSpriteUv(geometry: THREE.BufferGeometry, column: number, row: number): void {
+    const uv = geometry.getAttribute('uv') as THREE.BufferAttribute
+    const [u0, v0, u1, v1] = this.sprites.uvRect(column, row)
+    for (let i = 0; i < uv.count; i++) {
+      // PlaneGeometry uses TL, TR, BL, BR. Mapping by vertex index keeps this
+      // stable when the bow changes frames repeatedly while being drawn.
+      // U is mirrored like the classic first-person view, so a diagonal tool
+      // sprite points tip-up away from the hand instead of lying sideways.
+      uv.setXY(i, i % 2 === 0 ? u1 : u0, i < 2 ? v1 : v0)
+    }
+    uv.needsUpdate = true
+  }
+
+  /** Classic items.png contains standby plus three bow-pulling sprites, arrow included. */
+  private updateBowVisual(): void {
+    if (!this.hand || this.handKind !== 'bow') return
+    const [column, row] = bowPullSprite(this.chargingBow ? this.bowCharge : null)
+    const stage = column - 5
+    if (stage === this.handBowStage) return
+    this.handBowStage = stage
+    this.setHandSpriteUv(this.hand.geometry, column, row)
+  }
+
+  private applyHandPose(swing: number): void {
+    if (!this.hand) return
+    // Mirrored sprites hold their bottom-right corner (the handle) nearest to
+    // the camera; negative yaw pushes the tip side away for classic perspective.
+    const poses: Record<HandKind, { position: [number, number, number]; rotation: [number, number, number] }> = {
+      block: { position: [0.42, -0.38, -0.72], rotation: [0.18, Math.PI / 4, 0.08] },
+      tool: { position: [0.46, -0.40, -0.70], rotation: [0.05, -0.5, -0.45] },
+      bow: { position: [0.45, -0.35, -0.72], rotation: [0.04, -0.45, -0.3] },
+      item: { position: [0.44, -0.37, -0.70], rotation: [0.04, -0.42, -0.35] }
+    }
+    const pose = poses[this.handKind]
+    this.hand.position.set(
+      pose.position[0] - swing * 0.1,
+      pose.position[1] - swing * 0.07,
+      pose.position[2] - swing * 0.08
+    )
+    this.hand.rotation.set(
+      pose.rotation[0] - swing * 0.8,
+      pose.rotation[1] + swing * 0.35,
+      pose.rotation[2] - swing * 0.16
+    )
+    if (this.handKind === 'bow' && this.chargingBow) {
+      const draw = Math.min(1, this.bowCharge)
+      this.hand.position.x -= draw * 0.035
+      this.hand.position.z += draw * 0.045
+      this.hand.rotation.y += draw * 0.08
+    }
   }
 
   swing(): void { this.handSwing = 1 }
@@ -308,42 +429,272 @@ export class Interaction {
     }
   }
 
-  /** Applies one point of wear to the held tool; breaks it at zero durability. */
-  private damageTool(): void {
+  /** Applies wear to the selected damageable item; breaks it at zero durability. */
+  private damageHeldItem(amount = 1): void {
     if (this.mode !== 'survival') return
     const stack = this.selectedStack
-    const tool = stack ? ITEMS[stack.id]?.tool : null
-    if (!stack || !tool) return
-    stack.damage = (stack.damage ?? 0) + 1
-    if (stack.damage >= tool.tier.durability) {
+    const durability = stack ? durabilityForItem(stack.id) : 0
+    if (!stack || durability <= 0) return
+    if (!shouldConsumeDurability(enchantmentLevel(stack, 'unbreaking'))) return
+    stack.damage = (stack.damage ?? 0) + Math.max(1, amount)
+    if (stack.damage >= durability) {
       this.inventory.slots[this.selected] = null
       this.audio.toolBreak()
     }
     this.inventory.notify()
   }
 
+  private spawnBlockDrops(id: number, x: number, y: number, z: number, harvest: boolean): void {
+    const spawn = (itemId: number, count = 1) => this.drops.spawn(itemId, x + 0.5, y + 0.45, z + 0.5, count)
+    const held = this.selectedStack
+    const silkTouch = harvest && enchantmentLevel(held, 'silk_touch') > 0
+    const fortune = enchantmentLevel(held, 'fortune')
+    if (silkTouch && BLOCKS[id].hasItem && id !== B.FIRE && id !== B.PRIMED_TNT) {
+      spawn(id)
+      return
+    }
+    if (isWheat(id)) {
+      if (wheatAge(id) >= 7) {
+        spawn(I.WHEAT)
+        spawn(I.SEEDS, 1 + Math.floor(Math.random() * 3))
+      } else {
+        spawn(I.SEEDS)
+      }
+      return
+    }
+    if (id === B.TALLGRASS) {
+      if (Math.random() < 0.125) spawn(I.SEEDS)
+      return
+    }
+    if (id === B.GRAVEL && harvest) {
+      spawn(Math.random() < 0.1 ? I.FLINT : B.GRAVEL)
+      return
+    }
+    if (isLeafBlock(id)) {
+      // jungle saplings do not exist yet; jungle leaves only rarely drop apples' worth of nothing
+      if (id !== B.JUNGLE_LEAVES && Math.random() < 0.05) spawn(id === B.LEAVES ? B.SAPLING_OAK : B.SAPLING_SPRUCE)
+      if (id === B.LEAVES && Math.random() < 0.005) spawn(I.APPLE)
+      return
+    }
+    if (id === B.BED_HEAD) {
+      spawn(I.BED)
+      return
+    }
+    if (id === B.BOOKSHELF) {
+      spawn(I.BOOK, 3)
+      return
+    }
+    const drop = harvest ? BLOCKS[id].dropItem : null
+    if (drop !== null) {
+      const fortuneCount = (id === B.COAL_ORE || id === B.DIAMOND_ORE)
+        ? fortuneDropCount(1, fortune)
+        : 1
+      spawn(drop, fortuneCount)
+      // Iron and gold drop the ore block itself; their XP comes from smelting.
+      const xp = id === B.COAL_ORE ? Math.floor(Math.random() * 3)
+        : id === B.DIAMOND_ORE ? 3 + Math.floor(Math.random() * 5)
+          : 0
+      if (xp > 0) this.onExperience(x + 0.5, y + 0.5, z + 0.5, xp)
+    }
+  }
+
+  dropAutomaticBlock(x: number, y: number, z: number, id: number): void {
+    if (this.mode === 'survival') this.spawnBlockDrops(id, x, y, z, true)
+  }
+
+  dropExplodedBlock(x: number, y: number, z: number, id: number): void {
+    if (this.mode === 'survival' && Math.random() < 0.3) this.spawnBlockDrops(id, x, y, z, true)
+  }
+
+  private useFarmingItem(hit: RayHit): boolean {
+    if (this.mode !== 'survival') return false
+    const item = this.selectedItem
+    const stack = this.selectedStack
+    if (!item || !stack) return false
+
+    if (item.tool?.type === 'hoe' && (hit.id === B.GRASS || hit.id === B.DIRT) && hit.ny > 0) {
+      if (this.world.getBlock(hit.x, hit.y + 1, hit.z) !== B.AIR) return true
+      this.world.setBlock(hit.x, hit.y, hit.z, B.FARMLAND_DRY)
+      this.damageHeldItem()
+      this.player.addExhaustion(0.005)
+      this.audio.placeBlock('dirt')
+      this.swing()
+      return true
+    }
+
+    if (item.id === I.SEEDS && (hit.id === B.FARMLAND_DRY || hit.id === B.FARMLAND_WET) && hit.ny > 0) {
+      const py = hit.y + 1
+      if (this.world.canPlantWheat(hit.x, py, hit.z)) {
+        this.world.setBlock(hit.x, py, hit.z, B.WHEAT_0)
+        this.inventory.remove(this.selected, 1)
+        this.audio.placeBlock('grass')
+        this.swing()
+      }
+      return true
+    }
+
+    if (item.id === I.BONE_MEAL && this.world.fertilize(hit.x, hit.y, hit.z)) {
+      this.inventory.remove(this.selected, 1)
+      this.swing()
+      return true
+    }
+    return false
+  }
+
+  private finishEating(item: ItemDefinition): void {
+    const food = item.food
+    if (!food || !this.player.eat(food.hunger, food.saturation)) return
+    if (food.effect && Math.random() < food.effect.chance) this.player.applyFoodEffect(food.effect.kind, food.effect.seconds)
+    this.inventory.remove(this.selected, 1)
+    if (food.returnsItem !== null) {
+      const left = this.inventory.add(food.returnsItem, 1)
+      if (left > 0) {
+        const eye = this.player.eyePos(this.rayOrigin)
+        this.drops.spawn(food.returnsItem, eye.x, eye.y - 0.4, eye.z, 1)
+      }
+    }
+    this.audio.eat()
+    this.swing()
+  }
+
+  private replaceOneHeldItem(resultId: number): void {
+    if (this.mode !== 'survival') return
+    const stack = this.selectedStack
+    if (!stack) return
+    if (stack.count === 1) {
+      this.inventory.slots[this.selected] = { id: resultId, count: 1 }
+      this.inventory.notify()
+      return
+    }
+    this.inventory.remove(this.selected, 1)
+    const left = this.inventory.add(resultId, 1)
+    if (left > 0) {
+      const eye = this.player.eyePos(this.rayOrigin)
+      this.drops.spawn(resultId, eye.x, eye.y - 0.35, eye.z, 1)
+    }
+  }
+
+  private useStageNineItem(hit: RayHit): boolean {
+    const item = this.selectedItem
+    if (!item) return false
+    if (item.id === I.BUCKET) {
+      if (hit.id !== B.WATER && hit.id !== B.LAVA) return true
+      this.world.setBlock(hit.x, hit.y, hit.z, B.AIR)
+      this.replaceOneHeldItem(hit.id === B.WATER ? I.WATER_BUCKET : I.LAVA_BUCKET)
+      this.audio.splash(false)
+      this.swing()
+      return true
+    }
+    if (item.id === I.WATER_BUCKET || item.id === I.LAVA_BUCKET) {
+      const px = hit.x + hit.nx, py = hit.y + hit.ny, pz = hit.z + hit.nz
+      const current = this.world.getBlock(px, py, pz)
+      if (current !== B.AIR && current !== B.FIRE && !CROSS[current] && !isFluid(current)) return true
+      this.world.setBlock(px, py, pz, item.id === I.WATER_BUCKET ? B.WATER : B.LAVA)
+      this.replaceOneHeldItem(I.BUCKET)
+      this.audio.splash(false)
+      this.swing()
+      return true
+    }
+    if (item.id === I.FLINT_AND_STEEL) {
+      let lit = false
+      if (hit.id === B.TNT) lit = this.world.primeTnt(hit.x, hit.y, hit.z)
+      else lit = this.world.ignite(hit.x + hit.nx, hit.y + hit.ny, hit.z + hit.nz)
+      if (lit) {
+        this.damageHeldItem()
+        this.audio.placeBlock('wood')
+        this.swing()
+      }
+      return true
+    }
+    return false
+  }
+
+  /** Places both bed halves: foot at the clicked cell, head pointing away from the player. */
+  private useBedItem(hit: RayHit): boolean {
+    const item = this.selectedItem
+    if (item?.id !== I.BED) return false
+    let px = hit.x + hit.nx, py = hit.y + hit.ny, pz = hit.z + hit.nz
+    if (CROSS[hit.id]) { px = hit.x; py = hit.y; pz = hit.z }
+    const facing = oppositeHorizontalFace(this.facingTowardPlayer(px, pz))
+    const hx = px + (facing === 0 ? 1 : facing === 1 ? -1 : 0)
+    const hz = pz + (facing === 4 ? 1 : facing === 5 ? -1 : 0)
+    const fits = (x: number, z: number): boolean => {
+      const cur = this.world.getBlock(x, py, z)
+      return (cur === B.AIR || CROSS[cur]) && SOLID[this.world.getBlock(x, py - 1, z)] &&
+        !this.player.intersectsBlock(x, py, z)
+    }
+    if (!fits(px, pz) || !fits(hx, hz)) return true
+    this.world.setBlock(px, py, pz, B.BED_FOOT, facing)
+    this.world.setBlock(hx, py, hz, B.BED_HEAD, facing)
+    if (this.mode === 'survival') this.inventory.remove(this.selected, 1)
+    this.audio.placeBlock('wood')
+    this.swing()
+    return true
+  }
+
   update(dt: number): void {
+    if (this.chargingBow) {
+      this.bowCharge = Math.min(1.2, this.bowCharge + dt)
+    }
     this.camera.getWorldDirection(this.rayDir)
     this.rayOrigin.copy(this.camera.position)
-    const hit = this.world.raycast(this.rayOrigin, this.rayDir, REACH)
+    const reach = this.mode === 'survival' ? SURVIVAL_REACH : CREATIVE_REACH
+    const hit = this.world.raycast(this.rayOrigin, this.rayDir, reach, this.selectedItem?.id === I.BUCKET)
+    const entityHit = this.entities.raycast(this.rayOrigin, this.rayDir, MELEE_REACH)
+    const entityIsFirst = !!entityHit && (!hit || entityHit.distance < hit.dist)
     this.target = hit
+    this.selectionMesh.visible = !!hit && !entityIsFirst
+    if (hit && !entityIsFirst) this.selectionMesh.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5)
 
-    if (hit && !CROSS[hit.id]) {
-      this.highlight.visible = true
-      this.highlight.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5)
-    } else {
-      this.highlight.visible = false
+    this.attackCooldown = Math.max(0, this.attackCooldown - dt)
+    if (this.breaking && entityIsFirst) {
+      this.attackingEntity = true
+      this.crackMesh.visible = false
+      if (this.attackCooldown <= 0) {
+        const critical = !this.player.onGround && !this.player.inWater && this.player.vel.y < -0.08
+        const stack = this.selectedStack
+        const targetKind = entityHit!.entity.kind
+        let enchantBonus = sharpnessBonus(enchantmentLevel(stack, 'sharpness'))
+        const smite = enchantmentLevel(stack, 'smite')
+        if (smite > 0 && (targetKind === 'zombie' || targetKind === 'skeleton')) enchantBonus += 2.5 * smite
+        const bane = enchantmentLevel(stack, 'bane_of_arthropods')
+        if (bane > 0 && targetKind === 'spider') enchantBonus += 2.5 * bane
+        const damage = meleeDamage(this.selectedItem?.id ?? null, critical, enchantBonus)
+        const knockback = (this.player.sprinting ? 6.2 : 4.2) + enchantmentLevel(stack, 'knockback') * 1.2
+        if (this.entities.damage(
+          entityHit!.entity.id, damage, this.player.pos.x, this.player.pos.z, knockback,
+          enchantmentLevel(stack, 'looting')
+        )) {
+          const fireAspect = enchantmentLevel(stack, 'fire_aspect')
+          if (fireAspect > 0) this.entities.ignite(entityHit!.entity.id, fireAspect * 4)
+          this.attackCooldown = ATTACK_COOLDOWN
+          this.swing()
+          this.player.addExhaustion(0.1)
+          if (this.selectedItem?.tool?.type === 'sword') this.damageHeldItem()
+        }
+      }
     }
 
     // breaking
-    if (this.breaking && hit) {
+    if (this.breaking && hit && !this.attackingEntity) {
       const key = hit.x + ',' + hit.y + ',' + hit.z
       if (key !== this.breakKey) {
         this.breakKey = key
         this.breakProgress = 0
       }
-      const info = breakInfoFor(hit.id, this.mode === 'survival' ? this.selectedItem : null, this.mode === 'creative')
-      if (isFinite(info.time)) {
+      const info = breakInfoFor(
+        hit.id,
+        this.mode === 'survival' ? this.selectedItem : null,
+        this.mode === 'creative',
+        enchantmentLevel(this.selectedStack, 'efficiency')
+      )
+      // classic mining penalties: submerged without Aqua Affinity and floating both slow digging
+      let breakTime = info.time
+      if (this.mode === 'survival') {
+        if (this.player.headUnderwater && !this.player.aquaAffinity) breakTime *= 5
+        if (!this.player.onGround && !this.player.inWater) breakTime *= 5
+      }
+      if (isFinite(breakTime)) {
         this.breakProgress += dt
         this.handSwing = Math.max(this.handSwing, 0.55)
         this.mineTickTimer -= dt
@@ -353,15 +704,14 @@ export class Interaction {
           const avg = this.atlas.tileAvg[tileFor(hit.id, 0)]
           this.particles.burst(hit.x + 0.5 + hit.nx * 0.5, hit.y + 0.5 + hit.ny * 0.5, hit.z + 0.5 + hit.nz * 0.5, avg, 3)
         }
-        const frac = this.breakProgress / info.time
+        const frac = this.breakProgress / breakTime
         if (frac >= 1) {
           const id = hit.id
           this.world.setBlock(hit.x, hit.y, hit.z, B.AIR)
           this.onBlockBroken(hit.x, hit.y, hit.z, id)
           if (this.mode === 'survival') {
-            const drop = info.harvest ? BLOCKS[id].dropItem : null
-            if (drop !== null) this.drops.spawn(drop, hit.x + 0.5, hit.y + 0.45, hit.z + 0.5)
-            if (isFinite(BLOCKS[id].hardness) && BLOCKS[id].hardness > 0) this.damageTool()
+            this.spawnBlockDrops(id, hit.x, hit.y, hit.z, info.harvest)
+            if (isFinite(BLOCKS[id].hardness) && BLOCKS[id].hardness > 0) this.damageHeldItem()
             this.player.addExhaustion(0.005)
           }
           const avg = this.atlas.tileAvg[tileFor(id, 0)]
@@ -372,7 +722,7 @@ export class Interaction {
         } else if (frac > 0.02 && !CROSS[hit.id]) {
           this.crackMesh.visible = true
           this.crackMesh.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5)
-          const stage = Math.min(3, Math.floor(frac * 4))
+          const stage = Math.min(this.atlas.crackTex.length - 1, Math.floor(frac * this.atlas.crackTex.length))
           if (this.crackMat.map !== this.atlas.crackTex[stage]) {
             this.crackMat.map = this.atlas.crackTex[stage]
             this.crackMat.needsUpdate = true
@@ -389,26 +739,84 @@ export class Interaction {
 
     // placing / using blocks
     this.placeCooldown -= dt
-    if (this.placing && hit && this.placeCooldown <= 0) {
+    if (this.placing && this.placeCooldown <= 0) {
+      if (entityIsFirst) {
+        const item = this.selectedItem
+        if (item?.id === I.SHEARS) {
+          const wool = this.entities.shear(entityHit!.entity.id)
+          if (wool > 0) {
+            const entity = entityHit!.entity
+            this.drops.spawn(B.WOOL, entity.x, entity.y + 0.7, entity.z, wool)
+            this.damageHeldItem()
+            this.audio.breakBlock('cloth')
+            this.swing()
+            this.placing = false
+            this.placeCooldown = 0.3
+            return
+          }
+        }
+        if (item && this.entities.feed(entityHit!.entity.id, item.id)) {
+          if (this.mode === 'survival') this.inventory.remove(this.selected, 1)
+          this.swing()
+          this.placing = false
+          this.placeCooldown = 0.3
+          return
+        }
+      }
       // right-clicking a usable block opens it (crouch to place a block instead)
-      const usable = hit.id === B.CRAFTING_TABLE || isContainerBlock(hit.id)
+      const usable = !!hit && (hit.id === B.CRAFTING_TABLE || isContainerBlock(hit.id) ||
+        hit.id === B.ENCHANTING_TABLE || isBedBlock(hit.id))
       if (usable && this.mode === 'survival' && !this.player.crouching) {
         this.placing = false
-        this.onUseBlock(hit)
+        this.onUseBlock(hit!)
         return
       }
       const item = this.selectedItem
       const stack = this.selectedStack
-      const placeable = item?.placeBlock ?? null
-      if (placeable !== null && (this.mode === 'creative' || !!stack)) {
+      if (hit && this.useStageNineItem(hit)) {
+        this.eatProgress = 0
+        this.placeCooldown = 0.24
+      } else if (hit && this.useBedItem(hit)) {
+        this.eatProgress = 0
+        this.placeCooldown = 0.3
+      } else if (item?.id === I.MAP) {
+        this.onUseMap()
+        this.placing = false
+        this.placeCooldown = 0.3
+      } else if (item?.id === I.COMPASS || item?.id === I.CLOCK) {
+        this.onUseNavigation(item.id)
+        this.placing = false
+        this.placeCooldown = 0.3
+      } else if (item?.food && this.mode === 'survival') {
+        if (this.player.hunger < 20) {
+          this.eatProgress += dt
+          this.handSwing = Math.max(this.handSwing, 0.32 + Math.sin(this.eatProgress * 18) * 0.08)
+          if (this.eatProgress >= item.food.useSeconds) {
+            this.finishEating(item)
+            this.eatProgress = 0
+            this.placeCooldown = 0.24
+          }
+        }
+      } else if (hit && this.useFarmingItem(hit)) {
+        this.eatProgress = 0
+        this.placeCooldown = 0.24
+      } else {
+        this.eatProgress = 0
+        const placeable = item?.placeBlock ?? null
+        if (hit && placeable !== null && (this.mode === 'creative' || !!stack)) {
         let px = hit.x + hit.nx, py = hit.y + hit.ny, pz = hit.z + hit.nz
         // clicking a cross plant replaces it directly
         if (CROSS[hit.id]) { px = hit.x; py = hit.y; pz = hit.z }
         const cur = this.world.getBlock(px, py, pz)
-        const replaceable = cur === B.AIR || cur === B.WATER || CROSS[cur]
+        const replaceable = cur !== placeable && (cur === B.AIR || isFluid(cur) || CROSS[cur])
+        const plantFits = placeable === B.SUGARCANE ? this.world.canPlantSugarCane(px, py, pz)
+          : placeable === B.MUSHROOM_BROWN || placeable === B.MUSHROOM_RED ? this.world.canPlantMushroom(px, py, pz)
+            : placeable === B.SAPLING_OAK || placeable === B.SAPLING_SPRUCE ? this.world.canPlantSapling(px, py, pz)
+              : placeable === B.RAIL ? SOLID[this.world.getBlock(px, py - 1, pz)]
+              : true
         if (placeable === B.CHEST && !this.chestFits(px, py, pz)) {
           this.placeCooldown = 0.24
-        } else if (replaceable && !this.player.intersectsBlock(px, py, pz)) {
+        } else if (replaceable && plantFits && !this.player.intersectsBlock(px, py, pz)) {
           const facing = isDirectionalBlock(placeable) ? this.facingTowardPlayer(px, pz) : undefined
           this.world.setBlock(px, py, pz, placeable, facing)
           if (placeable === B.CHEST && facing !== undefined) this.alignChestPair(px, py, pz, facing)
@@ -420,25 +828,24 @@ export class Interaction {
           this.swing()
           this.placeCooldown = 0.24
         }
+        }
       }
+    } else if (!this.placing) {
+      this.eatProgress = 0
     }
 
     // hand animation
     if (this.hand) {
       this.handSwing = Math.max(0, this.handSwing - dt * 4)
       const s = Math.sin(this.handSwing * Math.PI)
-      if (this.handFlat) {
-        this.hand.position.set(0.31 - s * 0.09, -0.24 + s * 0.04, -0.55 - s * 0.13)
-        this.hand.rotation.set(0.04 - s * 0.75, -0.2 + s * 0.25, -0.28)
-      } else {
-        this.hand.position.set(0.3 - s * 0.09, -0.26 + s * 0.04, -0.55 - s * 0.13)
-        this.hand.rotation.set(0.12 - s * 0.9, Math.PI / 5 + s * 0.4, 0)
-      }
+      this.updateBowVisual()
+      this.applyHandPose(s)
     }
   }
 
   dispose(): void {
-    this.highlight.geometry.dispose()
     this.crackMesh.geometry.dispose()
+    this.selectionMesh.geometry.dispose()
+    ;(this.selectionMesh.material as THREE.Material).dispose()
   }
 }
