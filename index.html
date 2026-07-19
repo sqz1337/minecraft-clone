@@ -106,6 +106,7 @@
         <b>X</b><span>Ore xray + noclip</span>
         <b>T</b><span>Fast-forward time</span>
         <b>Y</b><span>Cycle weather</span>
+        <b>/</b><span>Command console (/spawn, /help)</span>
         <b>Esc</b><span>Pause</span>
       </div>
       <button id="btn-close-controls" class="btn btn-primary">Close</button>
@@ -207,6 +208,12 @@
     <div id="map-caption"></div>
   </div>
   <div id="toast" class="hidden"></div>
+
+  <!-- Command console -->
+  <div id="console" class="hidden">
+    <div id="console-log"></div>
+    <div id="console-line"><span id="console-prompt">&gt;</span><input id="console-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" /></div>
+  </div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>

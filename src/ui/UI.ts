@@ -59,6 +59,8 @@ export class UI {
   /** Click on an item in the temporary admin panel. */
   onAdminItemClick: (id: number, button: SlotButton) => void = () => {}
   onOutsideInventoryClick: (button: SlotButton) => void = () => {}
+  /** Console submit (text without leading slash) or cancel (null). */
+  onConsoleClose: (text: string | null) => void = () => {}
 
   private title = el<HTMLDivElement>('title')
   private loading = el<HTMLDivElement>('loading')
@@ -103,6 +105,9 @@ export class UI {
   private experienceBar = el<HTMLDivElement>('experience-bar')
   private experienceLevelEl = el<HTMLDivElement>('experience-level')
   private toastEl = el<HTMLDivElement>('toast')
+  private consoleEl = el<HTMLDivElement>('console')
+  private consoleInput = el<HTMLInputElement>('console-input')
+  private consoleLogEl = el<HTMLDivElement>('console-log')
   private mapOverlay = el<HTMLDivElement>('map-overlay')
   private mapCanvas = el<HTMLCanvasElement>('map-canvas')
   private mapCaption = el<HTMLDivElement>('map-caption')
@@ -139,6 +144,20 @@ export class UI {
     this.recipeToggle.addEventListener('click', () => {
       this.recipeBookOpen = !this.recipeBookOpen
       this.renderScreen()
+    })
+    this.consoleInput.addEventListener('keydown', (event) => {
+      // Keep typing from leaking into the game's global key handler.
+      event.stopPropagation()
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        const text = this.consoleInput.value.trim()
+        this.hideConsole()
+        this.onConsoleClose(text.length > 0 ? text : null)
+      } else if (event.key === 'Escape') {
+        event.preventDefault()
+        this.hideConsole()
+        this.onConsoleClose(null)
+      }
     })
     el<HTMLInputElement>('seed-input').value = settings.lastSeed
     el<HTMLSelectElement>('quality-select').value = settings.quality
@@ -701,5 +720,31 @@ export class UI {
     this.toastEl.classList.add('visible')
     if (this.toastTimer !== null) clearTimeout(this.toastTimer)
     this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('visible'), 2200)
+  }
+
+  get consoleOpen(): boolean { return !this.consoleEl.classList.contains('hidden') }
+
+  openConsole(prefill = '/'): void {
+    this.consoleEl.classList.remove('hidden')
+    this.consoleInput.value = prefill
+    this.consoleInput.focus()
+    const end = this.consoleInput.value.length
+    this.consoleInput.setSelectionRange(end, end)
+  }
+
+  hideConsole(): void {
+    this.consoleEl.classList.add('hidden')
+    this.consoleInput.value = ''
+    this.consoleInput.blur()
+  }
+
+  /** Appends a persistent line to the console log (kind tints ok/err). */
+  consolePrint(message: string, kind: 'ok' | 'err' | 'info' = 'info'): void {
+    const line = document.createElement('div')
+    line.className = 'line' + (kind === 'info' ? '' : ' ' + kind)
+    line.textContent = message
+    this.consoleLogEl.append(line)
+    while (this.consoleLogEl.childElementCount > 40) this.consoleLogEl.firstElementChild!.remove()
+    this.consoleLogEl.scrollTop = this.consoleLogEl.scrollHeight
   }
 }

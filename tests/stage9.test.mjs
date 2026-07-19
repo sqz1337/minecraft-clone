@@ -39,7 +39,7 @@ function makeWorld() {
     blockEdits: new Map(), blockFacings: new Map(), editsDirty: false,
     scheduledTicks: [], simulationTick: 0, simulationAccumulator: 0,
     renderDistance: 4, grassDensity: 1, mutationBatchDepth: 0,
-    dirtyChunkKeys: new Set(), onAutomaticBlockBreak: () => {}, onTntExplode: () => {}
+    dirtyChunkKeys: new Set(), onAutomaticBlockBreak: () => {}, onTntExplode: () => {}, onTntPrimed: () => {}
   })
   world.remeshChunk = () => {}
   return { world, chunk }

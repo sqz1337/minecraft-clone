@@ -60,6 +60,8 @@ function wantsRandomTick(id: number): boolean {
 export class World {
   onAutomaticBlockBreak: (x: number, y: number, z: number, id: number) => void = () => {}
   onTntExplode: (x: number, y: number, z: number, radius: number) => void = () => {}
+  /** Fired when a TNT block starts its fuse, so the view can flash it. */
+  onTntPrimed: (x: number, y: number, z: number) => void = () => {}
   /** Fired once whenever a chunk finishes terrain generation (fresh or revisited). */
   onChunkGenerated: (cx: number, cz: number) => void = () => {}
   readonly gen: WorldGen
@@ -240,6 +242,7 @@ export class World {
     if (id !== B.TNT && id !== B.PRIMED_TNT) return false
     if (id === B.TNT) this.setBlock(x, y, z, B.PRIMED_TNT)
     this.scheduleBlockTick(x, y, z, Math.max(2, fuseTicks), 4)
+    this.onTntPrimed(x, y, z)
     return true
   }
 

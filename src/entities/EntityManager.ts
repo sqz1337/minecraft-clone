@@ -517,7 +517,7 @@ export class EntityManager {
     }
     const dx = goalX - entity.x, dz = goalZ - entity.z, len = Math.hypot(dx, dz)
     if (len > 0.3) {
-      entity.yaw = Math.atan2(-dx, -dz)
+      this.faceToward(entity, Math.atan2(-dx, -dz), dt)
       const targetX = dx / len * speed, targetZ = dz / len * speed
       entity.vx += (targetX - entity.vx) * clamp(dt * 4, 0, 1)
       entity.vz += (targetZ - entity.vz) * clamp(dt * 4, 0, 1)
@@ -613,7 +613,7 @@ export class EntityManager {
         }
         const strafe = Math.atan2(dz, dx) + Math.PI / 2
         this.steer(entity, entity.x + Math.cos(strafe) * 2, entity.z + Math.sin(strafe) * 2, def.speed * 0.7, dt)
-        entity.yaw = Math.atan2(-dx, -dz)
+        this.faceToward(entity, Math.atan2(-dx, -dz), dt)
         return
       }
     }
@@ -628,10 +628,22 @@ export class EntityManager {
     }
   }
 
+  /**
+   * Rotates the entity toward a heading at a capped angular speed. A raw
+   * `yaw = atan2(...)` snaps instantly, and when the target vector is tiny and
+   * noisy (a mob sitting on its goal, mate or the player) atan2 whips around the
+   * full circle every tick — which read as mobs spinning wildly. Capping the
+   * step keeps turns smooth no matter how jittery the desired heading is.
+   */
+  private faceToward(entity: EntityState, targetYaw: number, dt: number, rate = 9): void {
+    const delta = Math.atan2(Math.sin(targetYaw - entity.yaw), Math.cos(targetYaw - entity.yaw))
+    entity.yaw += clamp(delta, -rate * dt, rate * dt)
+  }
+
   private steer(entity: EntityState, goalX: number, goalZ: number, speed: number, dt: number): void {
     const dx = goalX - entity.x, dz = goalZ - entity.z, len = Math.hypot(dx, dz)
     if (len <= 0.25) { entity.vx *= 0.82; entity.vz *= 0.82; return }
-    entity.yaw = Math.atan2(-dx, -dz)
+    this.faceToward(entity, Math.atan2(-dx, -dz), dt)
     entity.vx += (dx / len * speed - entity.vx) * clamp(dt * 4, 0, 1)
     entity.vz += (dz / len * speed - entity.vz) * clamp(dt * 4, 0, 1)
     const aheadX = Math.floor(entity.x + dx / len * (entity.width * 0.6 + 0.35))

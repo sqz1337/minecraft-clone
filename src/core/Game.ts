@@ -3,6 +3,7 @@ import { Atlas } from '../gfx/Atlas'
 import { Materials } from '../gfx/Materials'
 import { Environment } from '../gfx/Environment'
 import { Particles } from '../gfx/Particles'
+import { TntFx } from '../gfx/TntFx'
 import { Critters } from '../gfx/Critters'
 import { U } from '../gfx/Uniforms'
 import { World } from '../world/World'
@@ -35,9 +36,9 @@ import { ExperienceOrbs } from '../entities/ExperienceOrbs'
 import { applyEnchantmentOffer, canEnchantItem, generateEnchantmentOffers, type EnchantingState } from '../player/Enchantments'
 import { experienceAfterDeath } from '../player/Experience'
 import { rollLoot } from '../world/Loot'
-import { HOSTILE_KINDS, VILLAGER_PROFESSIONS, type HostileKind, type VillagerProfession } from '../entities/EntityTypes'
+import { HOSTILE_KINDS, MOB_KINDS, VILLAGER_PROFESSIONS, type HostileKind, type MobKind, type VillagerProfession } from '../entities/EntityTypes'
 
-type GameState = 'title' | 'loading' | 'ready' | 'playing' | 'paused' | 'inventory'
+type GameState = 'title' | 'loading' | 'ready' | 'playing' | 'paused' | 'inventory' | 'chat'
 const SAVE_INTERVAL_SEC = 8
 
 /** The container screen currently open over the game world. */
@@ -59,6 +60,7 @@ export class Game {
   private materials: Materials
   private env!: Environment
   private particles!: Particles
+  private tntFx!: TntFx
   private critters!: Critters
   private world!: World
   private player!: Player
@@ -140,6 +142,7 @@ export class Game {
     ui.onQuit = () => this.quitToTitle()
     ui.onSettingsChanged = () => this.applySettings()
     ui.onInventoryToggle = () => this.toggleInventory()
+    ui.onConsoleClose = (text) => this.closeConsole(text)
     ui.onInventorySlotClick = (slot, button) => this.inventorySlotClick(slot, button)
     ui.onArmorSlotClick = (slot, button) => this.armorSlotClick(slot, button)
     ui.onCraftSlotClick = (index, button) => this.craftSlotClick(index, button)
@@ -215,6 +218,7 @@ export class Game {
     )
     this.env = new Environment(this.scene, preset.shadowSize, this.settings.renderDistance * CHUNK_SIZE)
     this.particles = new Particles(this.scene, preset.particleMult)
+    this.tntFx = new TntFx(this.scene)
     this.critters = new Critters(this.scene)
 
     this.player = new Player(this.camera, this.world, this.audio, this.mode)
@@ -235,7 +239,9 @@ export class Game {
       shootProjectile: (x, y, z, tx, ty, tz, damage) =>
         this.projectiles.shootAt(x, y, z, tx, ty, tz, damage),
       explosion: (x, y, z) => {
-        this.particles.burst(x, y, z, [0.45, 0.42, 0.38], 48)
+        this.particles.burst(x, y, z, [0.45, 0.42, 0.38], 40) // dark debris
+        this.particles.burst(x, y, z, [0.82, 0.80, 0.76], 26) // light smoke puff
+        this.particles.burst(x, y, z, [1.0, 0.6, 0.2], 12)    // fireball flecks
         this.audio.explosion()
       },
       blockExploded: (x, y, z, id) => {
@@ -269,7 +275,11 @@ export class Game {
     this.interaction.onBlockBroken = (x, y, z, id) => this.blockBroken(x, y, z, id)
     this.interaction.onExperience = (x, y, z, amount) => this.experienceOrbs.spawn(x, y, z, amount)
     this.world.onAutomaticBlockBreak = (x, y, z, id) => this.interaction.dropAutomaticBlock(x, y, z, id)
-    this.world.onTntExplode = (x, y, z, radius) => this.entities.explode(x, y, z, radius, this.player.pos)
+    this.world.onTntPrimed = (x, y, z) => this.tntFx.add(x, y, z)
+    this.world.onTntExplode = (x, y, z, radius) => {
+      this.tntFx.remove(Math.floor(x), Math.floor(y), Math.floor(z))
+      this.entities.explode(x, y, z, radius, this.player.pos)
+    }
     this.containers.restore(saved?.containers ?? [])
     this.entities.restore(saved?.entities ?? [])
     this.world.onChunkGenerated = (cx, cz) => this.initializeGeneratedChunk(cx, cz)
@@ -485,6 +495,8 @@ export class Game {
 
   private bindGameKeys(): void {
     document.addEventListener('keydown', (e) => {
+      // While the console is open its input owns the keyboard.
+      if (this.state === 'chat') return
       if (e.code === 'KeyE' && !e.repeat && this.mode === 'survival' &&
         (this.state === 'playing' || this.state === 'inventory')) {
         e.preventDefault()
@@ -503,6 +515,11 @@ export class Game {
         return
       }
       if (this.state !== 'playing') return
+      if (e.code === 'Slash' && !e.repeat) {
+        e.preventDefault()
+        this.openConsole()
+        return
+      }
       if (e.code.startsWith('Digit')) {
         const n = parseInt(e.code.slice(5), 10)
         if (n >= 1 && n <= this.interaction.currentHotbar.length) this.interaction.setSelected(n - 1)
@@ -582,6 +599,81 @@ export class Game {
       this.state = 'paused'
       this.requestPlay()
     }
+  }
+
+  /** Opens the developer command console, freeing the mouse like a container screen. */
+  private openConsole(): void {
+    if (this.state !== 'playing') return
+    this.state = 'chat'
+    this.player.enabled = false
+    this.player.clearKeys()
+    this.interaction.primaryUp()
+    this.interaction.secondaryUp()
+    // state is already 'chat', so releasing the pointer will not trigger the pause menu
+    if (document.pointerLockElement) document.exitPointerLock()
+    this.ui.openConsole('/')
+  }
+
+  private closeConsole(text: string | null): void {
+    if (this.state !== 'chat') return
+    if (text) this.runCommand(text)
+    this.state = 'paused'
+    this.requestPlay()
+  }
+
+  /** Minimal slash-command interpreter for testing (spawning creatures, etc.). */
+  private runCommand(raw: string): void {
+    const echo = raw.startsWith('/') ? raw : '/' + raw
+    this.ui.consolePrint(echo)
+    const parts = raw.replace(/^\//, '').trim().split(/\s+/).filter(Boolean)
+    const name = (parts[0] ?? '').toLowerCase()
+    const args = parts.slice(1)
+    if (name === '' ) return
+    if (name === 'help') { this.commandHelp(); return }
+    if (name === 'spawn') { this.commandSpawn(args); return }
+    this.ui.consolePrint(`Unknown command: ${name}. Try /help`, 'err')
+  }
+
+  private commandHelp(): void {
+    this.ui.consolePrint('/spawn <creature> [count] [baby] [profession] — spawn near you', 'info')
+    this.ui.consolePrint('/spawn all — one of every creature', 'info')
+    this.ui.consolePrint('creatures: ' + MOB_KINDS.join(', '), 'info')
+  }
+
+  private commandSpawn(args: string[]): void {
+    const target = (args[0] ?? '').toLowerCase()
+    if (!target) { this.ui.consolePrint('Usage: /spawn <creature> [count]', 'err'); return }
+    const flags = args.slice(1).map(a => a.toLowerCase())
+    const baby = flags.includes('baby')
+    const count = Math.max(1, Math.min(50, parseInt(flags.find(f => /^\d+$/.test(f)) ?? '1', 10) || 1))
+    const profession = VILLAGER_PROFESSIONS.find(p => flags.includes(p))
+
+    const kinds: MobKind[] = target === 'all'
+      ? [...MOB_KINDS]
+      : MOB_KINDS.includes(target as MobKind) ? [target as MobKind] : []
+    if (kinds.length === 0) {
+      this.ui.consolePrint(`No such creature "${target}". /help lists them.`, 'err')
+      return
+    }
+
+    let spawned = 0
+    for (const kind of kinds) {
+      const per = target === 'all' ? 1 : count
+      for (let i = 0; i < per; i++) {
+        const angle = Math.random() * Math.PI * 2
+        const dist = 2 + Math.random() * 2
+        const x = this.player.pos.x + Math.cos(angle) * dist
+        const z = this.player.pos.z + Math.sin(angle) * dist
+        const y = this.world.topSolidY(Math.floor(x), Math.floor(z)) + 1
+        const entity = this.entities.spawn(kind, x, y, z, {
+          bypassMobCap: true, persistent: true, baby,
+          ...(profession ? { profession } : {})
+        })
+        if (entity) spawned++
+      }
+    }
+    const label = target === 'all' ? `${spawned} creatures` : `${spawned}× ${target}`
+    this.ui.consolePrint(`Spawned ${label}${baby ? ' (baby)' : ''}.`, spawned > 0 ? 'ok' : 'err')
   }
 
   /** Right click on a usable block: crafting table, furnace or chest. */
@@ -1209,6 +1301,7 @@ export class Game {
     this.materials.solid.color.setScalar(1 - w.wetness * 0.12)
 
     this.particles.update(dt, this.camera.position, w.rain, w.snow, U.uNight.value, underwater, w.wind)
+    this.tntFx.update(playing ? dt : 0)
     this.critters.update(dt, p, U.uNight.value, w.rain + w.snow)
     this.ui.setUnderwater(underwater)
     this.audio.setUnderwater(underwater)

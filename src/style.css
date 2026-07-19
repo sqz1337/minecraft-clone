@@ -691,6 +691,56 @@ select option { background: #0d1420; }
 }
 #toast.visible { opacity: 1; }
 
+#console {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: min(720px, 96vw);
+  margin: 0 0 8px 8px;
+  z-index: 40;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 14px;
+  color: #f3f3f3;
+}
+#console.hidden { display: none; }
+#console-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+  max-height: 42vh;
+  overflow: hidden;
+}
+#console-log .line {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.55);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.35;
+}
+#console-log .line.err { color: #ff8f7a; }
+#console-log .line.ok { color: #9fe08a; }
+#console-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  padding: 4px 8px;
+}
+#console-prompt { color: #9fe08a; opacity: 0.9; }
+#console-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  font: inherit;
+  caret-color: #9fe08a;
+}
+
 #map-overlay {
   position: fixed;
   left: 50%;

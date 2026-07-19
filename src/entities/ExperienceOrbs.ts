@@ -21,6 +21,7 @@ export interface ExperiencePlayer {
 export class ExperienceOrbs {
   private orbs: Orb[] = []
   private material: THREE.SpriteMaterial
+  private frameTime = 0
   onPickup: (amount: number) => void = () => {}
 
   constructor(private scene: THREE.Scene, private world: World) {
@@ -29,7 +30,18 @@ export class ExperienceOrbs {
     texture.magFilter = THREE.NearestFilter
     texture.minFilter = THREE.NearestFilter
     texture.generateMipmaps = false
+    // xporb.png is a 4x4 sheet of 16 animation frames — show one cell, not all.
+    texture.repeat.set(0.25, 0.25)
     this.material = new THREE.SpriteMaterial({ map: texture, transparent: true, alphaTest: 0.05, depthWrite: false })
+  }
+
+  /** Advances the shared 16-frame twinkle and points the atlas at that cell. */
+  private animateFrame(dt: number): void {
+    this.frameTime += dt
+    const frame = Math.floor(this.frameTime * 8) % 16
+    const col = frame % 4, row = Math.floor(frame / 4)
+    // flipY is on by default, so the top image row sits at the high V offset.
+    this.material.map!.offset.set(col * 0.25, 1 - (row + 1) * 0.25)
   }
 
   spawn(x: number, y: number, z: number, amount: number): void {
@@ -58,6 +70,7 @@ export class ExperienceOrbs {
 
   update(dt: number, player: ExperiencePlayer): void {
     const safeDt = Math.max(0, Math.min(0.1, dt))
+    this.animateFrame(safeDt)
     for (let i = this.orbs.length - 1; i >= 0; i--) {
       const orb = this.orbs[i]
       orb.age += safeDt

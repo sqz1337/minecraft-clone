@@ -49,7 +49,7 @@ const MOB_SOUNDS: Record<MobKind, Record<MobEvent, readonly string[]>> = {
     ambient: numberedPaths('mob/chicken/say', 3),
     hurt: numberedPaths('mob/chicken/hurt', 2),
     death: numberedPaths('mob/chicken/hurt', 2),
-    step: numberedPaths('mob/chicken/step', 2),
+    step: [], // the chicken footstep sample is grating — silence it
     egg: ['mob/chicken/plop.ogg'], fuse: []
   },
   zombie: {

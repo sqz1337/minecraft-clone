@@ -37,6 +37,7 @@ export class EntityRenderer {
   private textures: THREE.Texture[] = []
   private materials = new Map<MobKind, THREE.MeshLambertMaterial>()
   private sheepFurMaterial: THREE.MeshLambertMaterial
+  private eyeMaterials = new Map<'enderman' | 'spider', THREE.MeshBasicMaterial>()
   private carriedBlockMaterial = new THREE.MeshLambertMaterial({ color: 0x8b6a45 })
   private mushroomMaterial = new THREE.MeshLambertMaterial({ color: 0xb52b28 })
 
@@ -53,7 +54,26 @@ export class EntityRenderer {
       ['creeper', 'creeper.png'], ['slime', 'slime.png'], ['enderman', 'enderman.png']
     ] as const) this.materials.set(kind, this.mobMaterial(loader, file, kind === 'slime'))
     this.sheepFurMaterial = this.mobMaterial(loader, 'sheep_fur.png', true)
+    this.eyeMaterials.set('enderman', this.eyesMaterial(loader, 'enderman_eyes.png'))
+    this.eyeMaterials.set('spider', this.eyesMaterial(loader, 'spider_eyes.png'))
     scene.add(this.group)
+  }
+
+  /** Full-bright, additively-blended eye overlay: the dark background adds
+   *  nothing and only the coloured eyes glow, so they stay lit at night. */
+  private eyesMaterial(loader: THREE.TextureLoader, file: string): THREE.MeshBasicMaterial {
+    const texture = loader.load(MOB_ROOT + file)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.magFilter = THREE.NearestFilter
+    texture.minFilter = THREE.NearestFilter
+    texture.generateMipmaps = false
+    this.textures.push(texture)
+    return new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
   }
 
   private mobMaterial(loader: THREE.TextureLoader, file: string, transparent = false): THREE.MeshLambertMaterial {
@@ -71,8 +91,12 @@ export class EntityRenderer {
     })
   }
 
-  /** Applies the legacy ModelRenderer cuboid unwrap to Three's six box faces. */
-  private mapBoxUvs(geometry: THREE.BoxGeometry, box: BoxUv): void {
+  /**
+   * Applies the legacy ModelRenderer cuboid unwrap to Three's six box faces.
+   * `texH` matches the skin height: classic mobs are 64x32, but the villager
+   * ships a 64x64 skin whose leg/arm strips live below the 32px line.
+   */
+  private mapBoxUvs(geometry: THREE.BoxGeometry, box: BoxUv, texH = TEXTURE_HEIGHT): void {
     const { u, v, width: w, height: h, depth: d } = box
     const rectangles = [
       [u, v + d, u + d, v + d + h],                       // +X
@@ -86,7 +110,7 @@ export class EntityRenderer {
     for (let face = 0; face < 6; face++) {
       const [px0, py0, px1, py1] = rectangles[face]
       const u0 = px0 / TEXTURE_WIDTH, u1 = px1 / TEXTURE_WIDTH
-      const v0 = 1 - py1 / TEXTURE_HEIGHT, v1 = 1 - py0 / TEXTURE_HEIGHT
+      const v0 = 1 - py1 / texH, v1 = 1 - py0 / texH
       const offset = face * 4
       uv.setXY(offset, u0, v1)
       uv.setXY(offset + 1, u1, v1)
@@ -102,10 +126,11 @@ export class EntityRenderer {
     pos: [number, number, number],
     material: THREE.Material,
     uv: BoxUv,
-    rotationX = 0
+    rotationX = 0,
+    texH = TEXTURE_HEIGHT
   ): THREE.Mesh {
     const geometry = new THREE.BoxGeometry(...size)
-    this.mapBoxUvs(geometry, uv)
+    this.mapBoxUvs(geometry, uv, texH)
     this.geometries.push(geometry)
     const mesh = new THREE.Mesh(geometry, material)
     mesh.position.set(...pos)
@@ -157,7 +182,10 @@ export class EntityRenderer {
         ? { u: 28, v: 8, width: 8, height: 16, depth: 6 }
         : { u: 28, v: 8, width: 10, height: 16, depth: 8 }
     const bodySize: [number, number, number] = cow ? [1.02, 1.5, 0.84] : sheep ? [0.86, 1.42, 0.68] : [0.9, 1.4, 0.74]
-    this.box(group, bodySize, [0, cow ? 0.94 : 0.88, 0.08], material, bodyUv, Math.PI / 2)
+    // -PI/2 lays the tall body box down so its "belly" strip (udder for cows)
+    // faces down. +PI/2 would put the belly texture — and the cow udder — on
+    // the spine, which reads as a stray pink "snout" on the animal's back.
+    this.box(group, bodySize, [0, cow ? 0.94 : 0.88, 0.08], material, bodyUv, -Math.PI / 2)
 
     const headUv: BoxUv = cow
       ? { u: 0, v: 0, width: 8, height: 8, depth: 6 }
@@ -185,11 +213,12 @@ export class EntityRenderer {
       this.box(group, [0.34, 0.34, 0.34], [0.28, 1.72, 0.32], this.mushroomMaterial,
         { u: 0, v: 0, width: 16, height: 16, depth: 16 })
     } else {
+      // Only a woolly body layer. This sheep_fur.png has an opaque wool face on
+      // its head region, so an inflated fur head box would bury the sheep's face
+      // in wool — classic sheep keep a bare, visible face.
       group.userData.furParts = [
         this.box(group, [0.98, 1.54, 0.78], [0, 0.91, 0.08], this.sheepFurMaterial,
-          { u: 28, v: 8, width: 8, height: 16, depth: 6 }, Math.PI / 2),
-        this.box(head, [0.64, 0.64, 0.74], [0, 0, 0], this.sheepFurMaterial,
-          { u: 0, v: 0, width: 6, height: 6, depth: 8 })
+          { u: 28, v: 8, width: 8, height: 16, depth: 6 }, -Math.PI / 2)
       ]
     }
 
@@ -205,42 +234,48 @@ export class EntityRenderer {
     return view
   }
 
-  /** Classic large-nosed villager with folded arms. */
+  /** Classic large-nosed villager with folded arms. Uses a 64x64 skin. */
   private villager(): EntityView {
     const group = new THREE.Group()
     const material = this.materials.get('villager')!
     const legs: THREE.Object3D[] = []
+    const H = 64 // villager.png is 64x64, not the classic 64x32
     this.box(group, [0.52, 0.78, 0.32], [0, 1.14, 0], material,
-      { u: 16, v: 16, width: 8, height: 12, depth: 4 })
+      { u: 16, v: 16, width: 8, height: 12, depth: 4 }, 0, H)
     const head = this.box(group, [0.56, 0.62, 0.56], [0, 1.82, 0], material,
-      { u: 0, v: 0, width: 8, height: 10, depth: 8 })
+      { u: 0, v: 0, width: 8, height: 10, depth: 8 }, 0, H)
     this.box(head, [0.16, 0.28, 0.16], [0, -0.05, -0.35], material,
-      { u: 24, v: 0, width: 2, height: 4, depth: 2 })
+      { u: 24, v: 0, width: 2, height: 4, depth: 2 }, 0, H)
     for (const x of [-0.14, 0.14]) legs.push(this.box(group, [0.24, 0.72, 0.25], [x, 0.36, 0], material,
-      { u: 0, v: 20, width: 4, height: 12, depth: 4 }))
+      { u: 0, v: 20, width: 4, height: 12, depth: 4 }, 0, H))
     this.box(group, [0.62, 0.2, 0.22], [0, 1.15, -0.25], material,
-      { u: 40, v: 16, width: 8, height: 4, depth: 4 }, -0.45)
+      { u: 40, v: 16, width: 8, height: 4, depth: 4 }, -0.45, H)
     return this.view(group, legs, head)
   }
 
   private chicken(): EntityView {
     const group = new THREE.Group()
+    // The parts were modelled ~1.5 blocks tall; a chicken is small, so build
+    // them in an inner group scaled down to sit inside its ~0.7 hitbox.
+    const model = new THREE.Group()
+    model.scale.setScalar(0.6)
+    group.add(model)
     const material = this.materials.get('chicken')!
     const legs: THREE.Object3D[] = []
-    this.box(group, [0.58, 0.78, 0.58], [0, 0.78, 0.04], material,
+    this.box(model, [0.58, 0.78, 0.58], [0, 0.78, 0.04], material,
       { u: 0, v: 9, width: 6, height: 8, depth: 6 }, Math.PI / 2)
-    const head = this.box(group, [0.4, 0.52, 0.34], [0, 1.22, -0.3], material,
+    const head = this.box(model, [0.4, 0.52, 0.34], [0, 1.22, -0.3], material,
       { u: 0, v: 0, width: 4, height: 6, depth: 3 })
     this.box(head, [0.34, 0.16, 0.18], [0, -0.02, -0.25], material,
       { u: 14, v: 0, width: 4, height: 2, depth: 2 })
     this.box(head, [0.16, 0.18, 0.14], [0, -0.18, -0.16], material,
       { u: 14, v: 4, width: 2, height: 2, depth: 2 })
-    this.box(group, [0.1, 0.38, 0.54], [-0.34, 0.83, 0.04], material,
+    this.box(model, [0.1, 0.38, 0.54], [-0.34, 0.83, 0.04], material,
       { u: 24, v: 13, width: 1, height: 4, depth: 6 })
-    this.box(group, [0.1, 0.38, 0.54], [0.34, 0.83, 0.04], material,
+    this.box(model, [0.1, 0.38, 0.54], [0.34, 0.83, 0.04], material,
       { u: 24, v: 13, width: 1, height: 4, depth: 6 })
     for (const x of [-0.16, 0.16]) {
-      legs.push(this.box(group, [0.1, 0.42, 0.1], [x, 0.25, 0], material,
+      legs.push(this.box(model, [0.1, 0.42, 0.1], [x, 0.25, 0], material,
         { u: 26, v: 0, width: 3, height: 5, depth: 3 }))
     }
     return this.view(group, legs, head)
@@ -261,11 +296,17 @@ export class EntityRenderer {
     const legs: THREE.Object3D[] = []
     for (const x of [-0.13, 0.13]) legs.push(this.box(group, [thin ? 0.14 : 0.23, legHeight, 0.24], [x, legHeight * 0.5, 0], material,
       { u: 0, v: 16, width: 4, height: 12, depth: 4 }))
-    for (const x of [-0.32, 0.32]) legs.push(this.box(group, [thin ? 0.13 : 0.22, armHeight, 0.22], [x, legHeight + bodyHeight * 0.62, 0], material,
-      { u: 40, v: 16, width: 4, height: 12, depth: 4 }))
+    for (const x of [-0.32, 0.32]) {
+      const arm = this.box(group, [thin ? 0.13 : 0.22, armHeight, 0.22], [x, legHeight + bodyHeight * 0.62, 0], material,
+        { u: 40, v: 16, width: 4, height: 12, depth: 4 })
+      // Endermen hold their long arms still; only zombie/skeleton arms swing.
+      if (!tall) legs.push(arm)
+    }
     body.userData.hostile = true
     const view = this.view(group, legs, head)
     if (kind === 'enderman') {
+      this.box(head, [0.5, 0.5, 0.44], [0, 0, 0], this.eyeMaterials.get('enderman')!,
+        { u: 0, v: 0, width: 8, height: 8, depth: 8 })
       const geometry = new THREE.BoxGeometry(0.48, 0.48, 0.48)
       this.geometries.push(geometry)
       view.carriedBlock = new THREE.Mesh(geometry, this.carriedBlockMaterial)
@@ -290,6 +331,7 @@ export class EntityRenderer {
     const group = new THREE.Group(), material = this.materials.get('spider')!
     this.box(group, [0.82, 0.52, 0.92], [0, 0.48, 0.16], material, { u: 0, v: 12, width: 10, height: 8, depth: 12 })
     const head = this.box(group, [0.62, 0.48, 0.62], [0, 0.48, -0.58], material, { u: 32, v: 4, width: 8, height: 8, depth: 8 })
+    this.box(head, [0.64, 0.5, 0.64], [0, 0, 0], this.eyeMaterials.get('spider')!, { u: 32, v: 4, width: 8, height: 8, depth: 8 })
     const legs: THREE.Object3D[] = []
     for (const side of [-1, 1]) for (let i = 0; i < 4; i++) {
       const leg = this.box(group, [0.78, 0.1, 0.1], [side * 0.69, 0.42, -0.34 + i * 0.23], material,
@@ -409,6 +451,7 @@ export class EntityRenderer {
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials.values()) material.dispose()
     this.sheepFurMaterial.dispose()
+    for (const material of this.eyeMaterials.values()) material.dispose()
     this.carriedBlockMaterial.dispose()
     this.mushroomMaterial.dispose()
     for (const texture of this.textures) texture.dispose()
