@@ -23,6 +23,7 @@ import {
 import { RECIPES, ingredientMatches, fuelSecondsFor, smeltResultFor } from '../world/Recipes'
 import type { RayHit } from '../world/World'
 import { ItemSprites } from '../gfx/ItemSprites'
+import { VanillaHeldItems } from '../gfx/VanillaHeldItems'
 import { Weather } from '../weather/Weather'
 import { AudioMan } from '../audio/Audio'
 import { Settings, QualityName, GameMode } from './Settings'
@@ -108,7 +109,8 @@ export class Game {
     private ui: UI,
     private settings: Settings,
     atlas: Atlas,
-    sprites: ItemSprites
+    sprites: ItemSprites,
+    private heldItems: VanillaHeldItems
   ) {
     this.sprites = sprites
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
@@ -264,7 +266,7 @@ export class Game {
       }
     })
     this.interaction = new Interaction(
-      this.world, this.player, this.camera, this.scene, this.atlas, this.sprites, this.audio, this.particles,
+      this.world, this.player, this.camera, this.scene, this.atlas, this.sprites, this.heldItems, this.audio, this.particles,
       this.mode, this.inventory, this.drops, this.entities, this.projectiles
     )
     this.interaction.onSelectionChanged = (i) => this.ui.setSelectedSlot(i)
@@ -526,6 +528,8 @@ export class Game {
       }
       switch (e.code) {
         case 'KeyQ': {
+          if (e.repeat) break
+          e.preventDefault()
           this.interaction.dropSelected()
           break
         }

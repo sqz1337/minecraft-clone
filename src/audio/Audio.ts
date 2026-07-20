@@ -98,6 +98,7 @@ export class AudioMan {
   private master: GainNode | null = null
   private lowpass: BiquadFilterNode | null = null
   private rainGain: GainNode | null = null
+  private rainSource: AudioBufferSourceNode | null = null
   private samples = new Map<string, AudioBuffer>()
   private volume = 0.8
   private rainTarget = 0
@@ -133,7 +134,7 @@ export class AudioMan {
     const rain = this.samples.get('ambient/weather/rain1.ogg')
     if (rain && this.ctx && this.master && !this.rainGain) {
       const source = this.ctx.createBufferSource()
-      source.buffer = rain
+      source.buffer = this.makeSeamlessRainLoop(rain)
       source.loop = true
       const gain = this.ctx.createGain()
       gain.gain.value = 0
@@ -141,7 +142,27 @@ export class AudioMan {
       gain.connect(this.master)
       source.start()
       this.rainGain = gain
+      this.rainSource = source
     }
+  }
+
+  /** Crossfades the sample tail into its head so the short classic clip loops without a silent seam. */
+  private makeSeamlessRainLoop(source: AudioBuffer): AudioBuffer {
+    if (!this.ctx || source.length < 4) return source
+    const fadeFrames = Math.min(Math.floor(source.sampleRate * 0.35), Math.floor(source.length / 4))
+    if (fadeFrames < 2) return source
+    const outputLength = source.length - fadeFrames
+    const output = this.ctx.createBuffer(source.numberOfChannels, outputLength, source.sampleRate)
+    for (let channel = 0; channel < source.numberOfChannels; channel++) {
+      const input = source.getChannelData(channel)
+      const data = output.getChannelData(channel)
+      for (let i = 0; i < fadeFrames; i++) {
+        const mix = i / (fadeFrames - 1)
+        data[i] = input[source.length - fadeFrames + i] * (1 - mix) + input[i] * mix
+      }
+      data.set(input.subarray(fadeFrames, outputLength), fadeFrames)
+    }
+    return output
   }
 
   private sample(paths: string | readonly string[], gain: number, pitch = 1, delay = 0): boolean {

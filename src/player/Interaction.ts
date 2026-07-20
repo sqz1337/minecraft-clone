@@ -16,6 +16,8 @@ import type { AudioMan } from '../audio/Audio'
 import type { Particles } from '../gfx/Particles'
 import type { EntityManager } from '../entities/EntityManager'
 import type { ProjectileManager } from '../entities/ProjectileManager'
+import { createExtrudedItemGeometry, setExtrudedItemUv } from '../gfx/HeldItemGeometry'
+import type { VanillaHeldItems } from '../gfx/VanillaHeldItems'
 import { ATTACK_COOLDOWN, MELEE_REACH, bowDamage, bowPower, bowPullSprite, bowVelocity, meleeDamage } from './Combat'
 import {
   enchantmentLevel, fortuneDropCount, sharpnessBonus, shouldConsumeDurability
@@ -81,6 +83,7 @@ export class Interaction {
     scene: THREE.Scene,
     atlas: Atlas,
     sprites: ItemSprites,
+    private heldItems: VanillaHeldItems,
     audio: AudioMan,
     particles: Particles,
     private mode: GameMode,
@@ -166,7 +169,13 @@ export class Interaction {
     this.setSelected(this.selected + (dir > 0 ? 1 : -1))
   }
 
-  primaryDown(): void { this.breaking = true; this.attackingEntity = false }
+  primaryDown(): void {
+    this.breaking = true
+    this.attackingEntity = false
+    // A left click always swings, even when the ray hits only air. Damage and
+    // block breaking are still decided independently in update().
+    this.swing()
+  }
   primaryUp(): void {
     this.breaking = false
     this.breakProgress = 0
@@ -218,24 +227,26 @@ export class Interaction {
     this.swing()
   }
 
-  /** Throws one unit of the selected item forward. */
+  /** Throws the complete selected stack forward as one item entity. */
   dropSelected(): void {
     const item = this.selectedItem
     if (!item) return
+    let count = 1
     let damage: number | undefined
     let enchantments: ItemStack['enchantments']
     if (this.mode === 'survival') {
       const stack = this.selectedStack
       if (!stack) return
+      count = stack.count
       damage = stack.damage
       enchantments = stack.enchantments?.map(enchantment => ({ ...enchantment }))
-      this.inventory.remove(this.selected, 1)
+      this.inventory.remove(this.selected, count)
     }
     this.camera.getWorldDirection(this.rayDir)
     const eye = this.camera.getWorldPosition(this.rayOrigin)
     const velocity = this.rayDir.clone().multiplyScalar(6)
     velocity.y += 2
-    this.drops.spawn(item.id, eye.x + this.rayDir.x * 0.4, eye.y - 0.25, eye.z + this.rayDir.z * 0.4, 1, {
+    this.drops.spawn(item.id, eye.x + this.rayDir.x * 0.4, eye.y - 0.25, eye.z + this.rayDir.z * 0.4, count, {
       velocity,
       pickupDelay: 1.2,
       damage,
@@ -263,35 +274,29 @@ export class Interaction {
     let geo: THREE.BufferGeometry
     let mat: THREE.MeshStandardMaterial
     if (item.sprite) {
-      const size = this.handKind === 'item' ? 0.24 : this.handKind === 'bow' ? 0.34 : 0.38
-      geo = new THREE.PlaneGeometry(size, size)
-      this.setHandSpriteUv(geo, item.sprite[0], item.sprite[1])
+      const size = this.handKind === 'item' ? 0.28 : this.handKind === 'bow' ? 0.7 : 0.7
+      const vanilla = this.heldItems.get(id)
+      geo = createExtrudedItemGeometry(size)
+      // Official standalone PNGs are not mirrored. Reversing the geometry's
+      // legacy U mapping puts axe heads and blades on the vanilla side.
+      setExtrudedItemUv(geo, vanilla ? [1, 0, 0, 1] : this.sprites.uvRect(item.sprite[0], item.sprite[1]))
       mat = new THREE.MeshStandardMaterial({
-        map: this.sprites.texture,
+        map: vanilla?.texture ?? this.sprites.texture,
         roughness: 1,
         metalness: 0,
-        transparent: true,
-        alphaTest: 0.1,
-        side: THREE.DoubleSide
+        alphaTest: 0.1
       })
     } else if (this.handFlat) {
-      geo = new THREE.PlaneGeometry(0.28, 0.28)
-      const uv = geo.getAttribute('uv') as THREE.BufferAttribute
-      const [u0, v0, u1, v1] = this.atlas.uvRect(tileFor(id, 0))
-      for (let i = 0; i < uv.count; i++) {
-        uv.setXY(i, uv.getX(i) < 0.5 ? u0 : u1, uv.getY(i) < 0.5 ? v0 : v1)
-      }
-      uv.needsUpdate = true
+      geo = createExtrudedItemGeometry(0.31)
+      setExtrudedItemUv(geo, this.atlas.uvRect(tileFor(id, 0)))
       mat = new THREE.MeshStandardMaterial({
         map: this.atlas.colorTex,
         roughness: 1,
         metalness: 0,
-        transparent: true,
-        alphaTest: 0.1,
-        side: THREE.DoubleSide
+        alphaTest: 0.1
       })
     } else {
-      geo = new THREE.BoxGeometry(0.28, 0.28, 0.28)
+      geo = new THREE.BoxGeometry(0.31, 0.31, 0.31)
       const uv = geo.getAttribute('uv') as THREE.BufferAttribute
       for (let f = 0; f < 6; f++) {
         const [u0, v0, u1, v1] = this.atlas.uvRect(tileFor(id, f))
@@ -319,6 +324,10 @@ export class Interaction {
       mat.emissive = new THREE.Color(0x5b2c83)
       mat.emissiveIntensity = 0.32
     }
+    // First-person models are a view overlay. They must not be rejected by
+    // terrain depth when the camera is pressed against a wall.
+    mat.depthTest = false
+    mat.depthWrite = false
     this.hand = new THREE.Mesh(geo, mat)
     this.hand.frustumCulled = false
     this.hand.renderOrder = 5
@@ -327,49 +336,47 @@ export class Interaction {
     this.camera.add(this.hand)
   }
 
-  private setHandSpriteUv(geometry: THREE.BufferGeometry, column: number, row: number): void {
-    const uv = geometry.getAttribute('uv') as THREE.BufferAttribute
-    const [u0, v0, u1, v1] = this.sprites.uvRect(column, row)
-    for (let i = 0; i < uv.count; i++) {
-      // PlaneGeometry uses TL, TR, BL, BR. Mapping by vertex index keeps this
-      // stable when the bow changes frames repeatedly while being drawn.
-      // U is mirrored like the classic first-person view, so a diagonal tool
-      // sprite points tip-up away from the hand instead of lying sideways.
-      uv.setXY(i, i % 2 === 0 ? u1 : u0, i < 2 ? v1 : v0)
-    }
-    uv.needsUpdate = true
-  }
-
   /** Classic items.png contains standby plus three bow-pulling sprites, arrow included. */
   private updateBowVisual(): void {
     if (!this.hand || this.handKind !== 'bow') return
-    const [column, row] = bowPullSprite(this.chargingBow ? this.bowCharge : null)
+    const [column] = bowPullSprite(this.chargingBow ? this.bowCharge : null)
     const stage = column - 5
     if (stage === this.handBowStage) return
     this.handBowStage = stage
-    this.setHandSpriteUv(this.hand.geometry, column, row)
+    ;(this.hand.material as THREE.MeshStandardMaterial).map = this.heldItems.bow(stage).texture
   }
 
-  private applyHandPose(swing: number): void {
+  private applyHandPose(swingProgress: number): void {
     if (!this.hand) return
-    // Mirrored sprites hold their bottom-right corner (the handle) nearest to
-    // the camera; negative yaw pushes the tip side away for classic perspective.
+    // Keep the model in the lower-right first-person area while leaving enough
+    // vertical room for long tools to point up instead of crossing the hotbar.
     const poses: Record<HandKind, { position: [number, number, number]; rotation: [number, number, number] }> = {
-      block: { position: [0.42, -0.38, -0.72], rotation: [0.18, Math.PI / 4, 0.08] },
-      tool: { position: [0.46, -0.40, -0.70], rotation: [0.05, -0.5, -0.45] },
-      bow: { position: [0.45, -0.35, -0.72], rotation: [0.04, -0.45, -0.3] },
-      item: { position: [0.44, -0.37, -0.70], rotation: [0.04, -0.42, -0.35] }
+      block: { position: [0.64, -0.33, -0.52], rotation: [0.12, Math.PI / 4, 0.06] },
+      tool: { position: [0.75, -0.29, -0.70], rotation: [0.04, -1.6, 1.5] },
+      bow: { position: [0.75, -0.45, -0.70], rotation: [0.04, -1.6, 1.5] },
+      item: { position: [0.60, -0.23, -0.70], rotation: [0.04, -0.42, 0.44] }
     }
     const pose = poses[this.handKind]
+    const vanillaRotation = this.heldItems.get(this.selectedItemId)?.firstPersonRotation
+    // Three's camera convention needs the vanilla +25-degree screen roll as a
+    // positive Z rotation. Negating it made diagonal tools almost horizontal.
+    const toolRoll = this.handKind === 'tool' ? 5 : 0
+    const modelRoll = vanillaRotation ? THREE.MathUtils.degToRad(vanillaRotation[2] + toolRoll) : pose.rotation[2]
+    // Classic ItemRenderer uses different sine curves for translation and
+    // rotation, producing a forward/downward jab instead of a linear tilt.
+    const rootSwing = Math.sin(Math.sqrt(swingProgress) * Math.PI)
+    const linearSwing = Math.sin(swingProgress * Math.PI)
+    const doubleSwing = Math.sin(Math.sqrt(swingProgress) * Math.PI * 2)
+    const squaredSwing = Math.sin(swingProgress * swingProgress * Math.PI)
     this.hand.position.set(
-      pose.position[0] - swing * 0.1,
-      pose.position[1] - swing * 0.07,
-      pose.position[2] - swing * 0.08
+      pose.position[0] - rootSwing * 0.12,
+      pose.position[1] + doubleSwing * 0.05,
+      pose.position[2] - linearSwing * 0.07
     )
     this.hand.rotation.set(
-      pose.rotation[0] - swing * 0.8,
-      pose.rotation[1] + swing * 0.35,
-      pose.rotation[2] - swing * 0.16
+      pose.rotation[0] - rootSwing * 1.35,
+      pose.rotation[1] - squaredSwing * 0.35,
+      modelRoll - rootSwing * 0.35
     )
     if (this.handKind === 'bow' && this.chargingBow) {
       const draw = Math.min(1, this.bowCharge)
@@ -837,9 +844,8 @@ export class Interaction {
     // hand animation
     if (this.hand) {
       this.handSwing = Math.max(0, this.handSwing - dt * 4)
-      const s = Math.sin(this.handSwing * Math.PI)
       this.updateBowVisual()
-      this.applyHandPose(s)
+      this.applyHandPose(1 - this.handSwing)
     }
   }
 

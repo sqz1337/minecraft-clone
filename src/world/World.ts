@@ -39,6 +39,17 @@ const RANDOM_TICK_INTERVAL = 20
 const MAX_TICKS_PER_FRAME = 5
 
 const LIGHT_CELLS = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT
+const LIGHT_CHANGED = 1 << 4
+const LIGHT_BORDER_POS_X = 1 << 0
+const LIGHT_BORDER_NEG_X = 1 << 1
+const LIGHT_BORDER_POS_Z = 1 << 2
+const LIGHT_BORDER_NEG_Z = 1 << 3
+const LIGHT_BORDER_DIRECTIONS = [
+  [1, 0, LIGHT_BORDER_POS_X],
+  [-1, 0, LIGHT_BORDER_NEG_X],
+  [0, 1, LIGHT_BORDER_POS_Z],
+  [0, -1, LIGHT_BORDER_NEG_Z]
+] as const
 // Reused scratch buffers so per-edit relights never allocate.
 const scratchSky = new Uint8Array(LIGHT_CELLS)
 const scratchBlock = new Uint8Array(LIGHT_CELLS)
@@ -583,16 +594,17 @@ export class World {
       for (const [cx, cz] of keys) this.dirtyChunkKeys.add(this.key(cx, cz))
       return
     }
-    this.rebuildChunkLighting(chunk)
+    const lightChanges = this.rebuildChunkLighting(chunk)
     this.remeshChunk(chunk)
     const remeshed = new Set<string>([this.key(chunk.cx, chunk.cz)])
-    // light can cross into the four orthogonal neighbors from anywhere in a chunk
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    // A light change only needs to ripple in the directions where a border
+    // voxel actually changed. Interior digging used to relight all 4 neighbors.
+    for (const [dx, dz, borderMask] of LIGHT_BORDER_DIRECTIONS) {
       const neighborKey = this.key(chunk.cx + dx, chunk.cz + dz)
       const neighbor = this.chunks.get(neighborKey)
       if (!neighbor || neighbor.state < ChunkState.GENERATED) continue
-      const lightChanged = this.rebuildChunkLighting(neighbor)
       const touchesBorder = keys.some(([cx, cz]) => cx === neighbor.cx && cz === neighbor.cz)
+      const lightChanged = (lightChanges & borderMask) !== 0 && this.rebuildChunkLighting(neighbor) !== 0
       if ((lightChanged || touchesBorder) && neighbor.state === ChunkState.MESHED) {
         this.remeshChunk(neighbor)
         remeshed.add(neighborKey)
@@ -609,16 +621,19 @@ export class World {
     this.dirtyChunkKeys.clear()
     const visited = new Set(keys)
     const rippled: Chunk[] = []
+    const lightChanges = new Map<string, number>()
     for (const key of keys) {
       const chunk = this.chunks.get(key)
       if (!chunk || chunk.state < ChunkState.GENERATED) continue
-      this.rebuildChunkLighting(chunk)
+      lightChanges.set(key, this.rebuildChunkLighting(chunk))
     }
     // second pass: pull the fresh light into surrounding chunks
     for (const key of keys) {
       const chunk = this.chunks.get(key)
       if (!chunk) continue
-      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const changes = lightChanges.get(key) ?? 0
+      for (const [dx, dz, borderMask] of LIGHT_BORDER_DIRECTIONS) {
+        if ((changes & borderMask) === 0) continue
         const neighborKey = this.key(chunk.cx + dx, chunk.cz + dz)
         if (visited.has(neighborKey)) continue
         visited.add(neighborKey)
@@ -985,9 +1000,9 @@ export class World {
   /**
    * Recomputes both light grids of a chunk: sky columns with water/leaf
    * attenuation, block emitters, seeds from the four generated neighbors and
-   * a flood fill. Returns true when any stored light value changed.
+   * a flood fill. Returns a bit mask for any change plus the affected borders.
    */
-  private rebuildChunkLighting(chunk: Chunk): boolean {
+  private rebuildChunkLighting(chunk: Chunk): number {
     const sky = scratchSky, block = scratchBlock, blocks = chunk.blocks
     sky.fill(0)
     block.fill(0)
@@ -1022,16 +1037,21 @@ export class World {
     this.propagateChunkLight(chunk, sky, skyQueue)
     this.propagateChunkLight(chunk, block, blockQueue)
 
-    let changed = false
+    let changes = 0
     for (let i = 0; i < LIGHT_CELLS; i++) {
       if (chunk.skyLight[i] !== sky[i] || chunk.blockLight[i] !== block[i]) {
-        changed = true
-        break
+        changes |= LIGHT_CHANGED
+        const column = i >> 7
+        const lx = column >> 4, lz = column & 15
+        if (lx === CHUNK_SIZE - 1) changes |= LIGHT_BORDER_POS_X
+        if (lx === 0) changes |= LIGHT_BORDER_NEG_X
+        if (lz === CHUNK_SIZE - 1) changes |= LIGHT_BORDER_POS_Z
+        if (lz === 0) changes |= LIGHT_BORDER_NEG_Z
       }
     }
     chunk.skyLight.set(sky)
     chunk.blockLight.set(block)
-    return changed
+    return changes
   }
 
   /** Pulls light in across the four chunk borders from already-lit neighbors. */
