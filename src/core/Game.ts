@@ -118,7 +118,7 @@ export class Game {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.18
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
     // Geometry can render at the display refresh rate, while the expensive shadow
     // map changes slowly enough to update independently at 30 Hz.
     this.renderer.shadowMap.autoUpdate = false
@@ -219,6 +219,7 @@ export class Game {
       saved?.scheduledTicks
     )
     this.env = new Environment(this.scene, preset.shadowSize, this.settings.renderDistance * CHUNK_SIZE)
+    this.env.setShadowsEnabled(preset.shadows)
     this.particles = new Particles(this.scene, preset.particleMult)
     this.tntFx = new TntFx(this.scene)
     this.critters = new Critters(this.scene)
@@ -580,6 +581,7 @@ export class Game {
     this.player.headBobEnabled = this.settings.headBob
     const preset = this.settings.preset
     this.applyPixelRatio()
+    this.env.setShadowsEnabled(preset.shadows)
     this.env.setShadowMapSize(preset.shadowSize)
     this.world.grassDensity = preset.grassDensity
     if (this.world.renderDistance !== this.settings.renderDistance) {
@@ -1300,8 +1302,7 @@ export class Game {
     const underwater = this.player.headUnderwater
     this.env.setWeather(w)
     this.env.update(playing ? dt : 0, this.camera, p, underwater, this.world.renderDistance * CHUNK_SIZE)
-    // rain wetness: surfaces get darker and glossier
-    this.materials.solid.roughness = 1 - w.wetness * 0.45
+    // rain wetness: surfaces get darker
     this.materials.solid.color.setScalar(1 - w.wetness * 0.12)
 
     this.particles.update(dt, this.camera.position, w.rain, w.snow, U.uNight.value, underwater, w.wind)

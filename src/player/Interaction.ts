@@ -272,7 +272,7 @@ export class Interaction {
     this.handFlat = this.handKind !== 'block'
     this.handBowStage = -1
     let geo: THREE.BufferGeometry
-    let mat: THREE.MeshStandardMaterial
+    let mat: THREE.MeshLambertMaterial
     if (item.sprite) {
       const size = this.handKind === 'item' ? 0.28 : this.handKind === 'bow' ? 0.7 : 0.7
       const vanilla = this.heldItems.get(id)
@@ -280,19 +280,15 @@ export class Interaction {
       // Official standalone PNGs are not mirrored. Reversing the geometry's
       // legacy U mapping puts axe heads and blades on the vanilla side.
       setExtrudedItemUv(geo, vanilla ? [1, 0, 0, 1] : this.sprites.uvRect(item.sprite[0], item.sprite[1]))
-      mat = new THREE.MeshStandardMaterial({
+      mat = new THREE.MeshLambertMaterial({
         map: vanilla?.texture ?? this.sprites.texture,
-        roughness: 1,
-        metalness: 0,
         alphaTest: 0.1
       })
     } else if (this.handFlat) {
       geo = createExtrudedItemGeometry(0.31)
       setExtrudedItemUv(geo, this.atlas.uvRect(tileFor(id, 0)))
-      mat = new THREE.MeshStandardMaterial({
+      mat = new THREE.MeshLambertMaterial({
         map: this.atlas.colorTex,
-        roughness: 1,
-        metalness: 0,
         alphaTest: 0.1
       })
     } else {
@@ -313,10 +309,8 @@ export class Interaction {
         }
       }
       geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-      mat = new THREE.MeshStandardMaterial({
+      mat = new THREE.MeshLambertMaterial({
         map: this.atlas.colorTex,
-        roughness: 1,
-        metalness: 0,
         vertexColors: true
       })
     }
@@ -343,7 +337,7 @@ export class Interaction {
     const stage = column - 5
     if (stage === this.handBowStage) return
     this.handBowStage = stage
-    ;(this.hand.material as THREE.MeshStandardMaterial).map = this.heldItems.bow(stage).texture
+    ;(this.hand.material as THREE.MeshLambertMaterial).map = this.heldItems.bow(stage).texture
   }
 
   private applyHandPose(swingProgress: number): void {

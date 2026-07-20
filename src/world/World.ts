@@ -79,7 +79,10 @@ export class World {
   private scene: THREE.Scene
   private materials: Materials
   private atlas: Atlas
-  private chunks = new Map<string, Chunk>()
+  private chunks = new Map<number, Chunk>()
+  /** One-entry chunk cache: block queries cluster heavily in the same chunk. */
+  private cacheKey = NaN
+  private cacheChunk: Chunk | undefined
   renderDistance: number
   grassDensity: number
   private genQueue: Chunk[] = []
@@ -95,7 +98,7 @@ export class World {
   private scheduledTicks: ScheduledBlockTick[] = []
   private scheduledTickIndex = new Map<string, ScheduledBlockTick>()
   private mutationBatchDepth = 0
-  private dirtyChunkKeys = new Set<string>()
+  private dirtyChunkKeys = new Set<number>()
 
   constructor(
     gen: WorldGen,
@@ -119,17 +122,32 @@ export class World {
     this.importScheduledTicks(savedScheduledTicks)
   }
 
+  /** String key used only for the persisted edit/facing maps (save format). */
   private key(cx: number, cz: number): string { return cx + ',' + cz }
 
+  /** Numeric chunk key — exact and collision-free for |cz| < 2^31. */
+  private static ck(cx: number, cz: number): number { return cx * 0x100000000 + cz }
+
   getChunk(cx: number, cz: number): Chunk | undefined {
-    return this.chunks.get(this.key(cx, cz))
+    return this.chunkAt(cx, cz)
+  }
+
+  private chunkAt(cx: number, cz: number): Chunk | undefined {
+    const k = World.ck(cx, cz)
+    if (k === this.cacheKey) return this.cacheChunk
+    const c = this.chunks.get(k)
+    this.cacheKey = k
+    this.cacheChunk = c
+    return c
   }
 
   private ensureChunk(cx: number, cz: number): Chunk {
-    let c = this.chunks.get(this.key(cx, cz))
+    const k = World.ck(cx, cz)
+    let c = this.chunks.get(k)
     if (!c) {
       c = new Chunk(cx, cz)
-      this.chunks.set(this.key(cx, cz), c)
+      this.chunks.set(k, c)
+      this.cacheKey = NaN
     }
     return c
   }
@@ -141,9 +159,24 @@ export class World {
   markBlockEditsSaved(): void { this.editsDirty = false }
 
   setXrayEnabled(enabled: boolean): void {
+    if (this.xrayEnabled === enabled) return
     this.xrayEnabled = enabled
-    for (const chunk of this.chunks.values()) {
-      if (chunk.meshes.xray) chunk.meshes.xray.visible = enabled
+    if (enabled) {
+      // Ore overlays are built lazily: demote meshed chunks so the streaming
+      // queue rebuilds them (with xray geometry) within the frame budget.
+      for (const chunk of this.chunks.values()) {
+        if (chunk.state === ChunkState.MESHED && !chunk.meshes.xray) chunk.state = ChunkState.GENERATED
+      }
+      this.queuesDirty = true
+    } else {
+      for (const chunk of this.chunks.values()) {
+        const m = chunk.meshes.xray
+        if (m) {
+          this.scene.remove(m)
+          m.geometry.dispose()
+          chunk.meshes.xray = null
+        }
+      }
     }
   }
 
@@ -178,9 +211,14 @@ export class World {
   getBlock(x: number, y: number, z: number): number {
     if (y < 0 || y >= WORLD_HEIGHT) return B.AIR
     const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
-    const c = this.chunks.get(this.key(cx, cz))
+    const c = this.chunkAt(cx, cz)
     if (!c || c.state < ChunkState.GENERATED) return B.AIR
     return c.get(x - cx * CHUNK_SIZE, y, z - cz * CHUNK_SIZE)
+  }
+
+  /** Sparse facing overrides of one chunk, for bulk consumers like the mesher. */
+  facingsForChunk(cx: number, cz: number): ReadonlyMap<number, HorizontalFace> | undefined {
+    return this.blockFacings.get(this.key(cx, cz))
   }
 
   getBlockFacing(x: number, y: number, z: number): HorizontalFace {
@@ -194,7 +232,7 @@ export class World {
     if (y >= WORLD_HEIGHT) return 15
     if (y < 0) return 0
     const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
-    const chunk = this.chunks.get(this.key(cx, cz))
+    const chunk = this.chunkAt(cx, cz)
     if (!chunk || chunk.state < ChunkState.GENERATED) return 15
     return chunk.skyLight[Chunk.index(x - cx * CHUNK_SIZE, y, z - cz * CHUNK_SIZE)]
   }
@@ -202,7 +240,7 @@ export class World {
   getBlockLight(x: number, y: number, z: number): number {
     if (y < 0 || y >= WORLD_HEIGHT) return 0
     const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
-    const chunk = this.chunks.get(this.key(cx, cz))
+    const chunk = this.chunkAt(cx, cz)
     if (!chunk || chunk.state < ChunkState.GENERATED) return 0
     return chunk.blockLight[Chunk.index(x - cx * CHUNK_SIZE, y, z - cz * CHUNK_SIZE)]
   }
@@ -344,7 +382,7 @@ export class World {
   setBlock(x: number, y: number, z: number, id: number, facing?: HorizontalFace): void {
     if (y < 1 || y >= WORLD_HEIGHT || !isValidBlockId(id)) return
     const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
-    const c = this.chunks.get(this.key(cx, cz))
+    const c = this.chunkAt(cx, cz)
     if (!c || c.state < ChunkState.GENERATED) return
     const lx = x - cx * CHUNK_SIZE, lz = z - cz * CHUNK_SIZE
     const index = Chunk.index(lx, y, lz)
@@ -399,13 +437,13 @@ export class World {
   }
 
   private remeshAt(cx: number, cz: number): void {
-    const c = this.chunks.get(this.key(cx, cz))
+    const c = this.chunkAt(cx, cz)
     if (c && c.state === ChunkState.MESHED) this.remeshChunk(c)
   }
 
   biomeAt(x: number, z: number): number {
     const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
-    const c = this.chunks.get(this.key(cx, cz))
+    const c = this.chunkAt(cx, cz)
     if (c && c.state >= ChunkState.GENERATED) {
       return c.colBiome[((x - cx * CHUNK_SIZE) << 4) | (z - cz * CHUNK_SIZE)]
     }
@@ -487,7 +525,7 @@ export class World {
     }
     // second lighting pass so border light converges before the first meshing
     for (const [cx, cz] of genList) {
-      const c = this.chunks.get(this.key(cx, cz))
+      const c = this.chunkAt(cx, cz)
       if (c && c.state >= ChunkState.GENERATED) this.rebuildChunkLighting(c)
       await maybeYield()
     }
@@ -519,7 +557,7 @@ export class World {
           this.generateChunk(genC)
           // freshly generated terrain may change light in already-meshed neighbors
           for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-            const neighbor = this.chunks.get(this.key(genC.cx + dx, genC.cz + dz))
+            const neighbor = this.chunkAt(genC.cx + dx, genC.cz + dz)
             if (neighbor && neighbor.state === ChunkState.MESHED && this.rebuildChunkLighting(neighbor)) {
               this.remeshChunk(neighbor)
             }
@@ -545,7 +583,7 @@ export class World {
   private neighborsGenerated(c: Chunk): boolean {
     for (let dz = -1; dz <= 1; dz++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const n = this.chunks.get(this.key(c.cx + dx, c.cz + dz))
+        const n = this.chunkAt(c.cx + dx, c.cz + dz)
         if (!n || n.state < ChunkState.GENERATED) return false
       }
     }
@@ -575,6 +613,7 @@ export class World {
       if (Math.abs(c.cx - ccx) > limit || Math.abs(c.cz - ccz) > limit) {
         this.disposeChunkMeshes(c)
         this.chunks.delete(k)
+        this.cacheKey = NaN
       }
     }
   }
@@ -590,17 +629,17 @@ export class World {
     if (lx === CHUNK_SIZE - 1 && lz === 0) keys.push([chunk.cx + 1, chunk.cz - 1])
     if (lx === CHUNK_SIZE - 1 && lz === CHUNK_SIZE - 1) keys.push([chunk.cx + 1, chunk.cz + 1])
     if ((this.mutationBatchDepth ?? 0) > 0) {
-      this.dirtyChunkKeys ??= new Set<string>()
-      for (const [cx, cz] of keys) this.dirtyChunkKeys.add(this.key(cx, cz))
+      this.dirtyChunkKeys ??= new Set<number>()
+      for (const [cx, cz] of keys) this.dirtyChunkKeys.add(World.ck(cx, cz))
       return
     }
     const lightChanges = this.rebuildChunkLighting(chunk)
     this.remeshChunk(chunk)
-    const remeshed = new Set<string>([this.key(chunk.cx, chunk.cz)])
+    const remeshed = new Set<number>([World.ck(chunk.cx, chunk.cz)])
     // A light change only needs to ripple in the directions where a border
     // voxel actually changed. Interior digging used to relight all 4 neighbors.
     for (const [dx, dz, borderMask] of LIGHT_BORDER_DIRECTIONS) {
-      const neighborKey = this.key(chunk.cx + dx, chunk.cz + dz)
+      const neighborKey = World.ck(chunk.cx + dx, chunk.cz + dz)
       const neighbor = this.chunks.get(neighborKey)
       if (!neighbor || neighbor.state < ChunkState.GENERATED) continue
       const touchesBorder = keys.some(([cx, cz]) => cx === neighbor.cx && cz === neighbor.cz)
@@ -611,7 +650,7 @@ export class World {
       }
     }
     for (let i = 1; i < keys.length; i++) {
-      if (!remeshed.has(this.key(keys[i][0], keys[i][1]))) this.remeshAt(keys[i][0], keys[i][1])
+      if (!remeshed.has(World.ck(keys[i][0], keys[i][1]))) this.remeshAt(keys[i][0], keys[i][1])
     }
   }
 
@@ -621,7 +660,7 @@ export class World {
     this.dirtyChunkKeys.clear()
     const visited = new Set(keys)
     const rippled: Chunk[] = []
-    const lightChanges = new Map<string, number>()
+    const lightChanges = new Map<number, number>()
     for (const key of keys) {
       const chunk = this.chunks.get(key)
       if (!chunk || chunk.state < ChunkState.GENERATED) continue
@@ -634,7 +673,7 @@ export class World {
       const changes = lightChanges.get(key) ?? 0
       for (const [dx, dz, borderMask] of LIGHT_BORDER_DIRECTIONS) {
         if ((changes & borderMask) === 0) continue
-        const neighborKey = this.key(chunk.cx + dx, chunk.cz + dz)
+        const neighborKey = World.ck(chunk.cx + dx, chunk.cz + dz)
         if (visited.has(neighborKey)) continue
         visited.add(neighborKey)
         const neighbor = this.chunks.get(neighborKey)
@@ -872,9 +911,9 @@ export class World {
     const centerX = Math.floor(px / CHUNK_SIZE), centerZ = Math.floor(pz / CHUNK_SIZE)
     const radius = Math.min(4, this.renderDistance)
     let processed = 0
-    for (const [chunkKey, chunk] of this.chunks) {
+    for (const chunk of this.chunks.values()) {
       if (processed >= 512) break
-      const [cx, cz] = chunkKey.split(',').map(Number)
+      const cx = chunk.cx, cz = chunk.cz
       if (Math.abs(cx - centerX) > radius || Math.abs(cz - centerZ) > radius) continue
       if (chunk.state < ChunkState.GENERATED) continue
       for (const index of chunk.randomTickIndices) {
@@ -1057,7 +1096,7 @@ export class World {
   /** Pulls light in across the four chunk borders from already-lit neighbors. */
   private seedBorderLight(chunk: Chunk, levels: Uint8Array, queue: number[], skyLight: boolean): void {
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-      const neighbor = this.chunks.get(this.key(chunk.cx + dx, chunk.cz + dz))
+      const neighbor = this.chunkAt(chunk.cx + dx, chunk.cz + dz)
       if (!neighbor || neighbor.state < ChunkState.GENERATED) continue
       const source = skyLight ? neighbor.skyLight : neighbor.blockLight
       for (let i = 0; i < CHUNK_SIZE; i++) {
@@ -1224,7 +1263,7 @@ export class World {
 
   remeshChunk(chunk: Chunk): void {
     this.disposeChunkMeshes(chunk)
-    const geoms = buildChunkGeoms(this, chunk, this.atlas, this.grassDensity)
+    const geoms = buildChunkGeoms(this, chunk, this.atlas, this.grassDensity, this.xrayEnabled)
     if (geoms.solid) {
       const m = new THREE.Mesh(geoms.solid, this.materials.solid)
       m.castShadow = true
@@ -1235,9 +1274,9 @@ export class World {
     }
     if (geoms.foliage) {
       const m = new THREE.Mesh(geoms.foliage, this.materials.foliage)
-      m.castShadow = true
+      // foliage never casts shadows: the alpha-tested depth pass costs far
+      // more than the tiny shadows of grass blades are worth
       m.receiveShadow = true
-      m.customDepthMaterial = this.materials.foliageDepth
       m.matrixAutoUpdate = false
       this.scene.add(m)
       chunk.meshes.foliage = m
@@ -1313,5 +1352,7 @@ export class World {
   dispose(): void {
     for (const c of this.chunks.values()) this.disposeChunkMeshes(c)
     this.chunks.clear()
+    this.cacheKey = NaN
+    this.cacheChunk = undefined
   }
 }

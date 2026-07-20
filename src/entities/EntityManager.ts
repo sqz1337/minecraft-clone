@@ -111,6 +111,11 @@ const noopHooks: EntityHooks = {
 function finite(value: number, fallback = 0): number { return Number.isFinite(value) ? value : fallback }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)) }
 
+// Scratch objects for the per-frame entity raycast — never allocate in there.
+const scratchRay = new THREE.Ray()
+const scratchBox = new THREE.Box3()
+const scratchHit = new THREE.Vector3()
+
 export function hostileSpawnAllowed(light: number, distance: number, hostileCount: number, biome: number): boolean {
   return light <= 7 && distance >= 24 && distance <= 128 && hostileCount < HOSTILE_MOB_CAP &&
     biome !== BIOME.OCEAN && biome !== BIOME.RIVER && biome !== BIOME.MUSHROOM
@@ -123,13 +128,17 @@ function isPeacefulKind(kind: MobKind): kind is PeacefulKind {
 /** Entity lifetime, chunk activation, spatial index, physics and passive AI. */
 export class EntityManager {
   private entities = new Map<string, EntityState>()
-  private spatial = new Map<string, Set<string>>()
+  private spatial = new Map<number, Set<string>>()
   private renderer: EntityRenderer | null
   private accumulator = 0
   private spawnTimer = 2
   private nextId = 1
   private hooks: EntityHooks
   private soundGates = new Map<'ambient' | 'step' | 'egg', number>()
+  // Running per-category counts: the getters are hit inside spawn loops.
+  private passiveN = 0
+  private villagerN = 0
+  private hostileN = 0
 
   constructor(private world: EntityWorld, scene?: THREE.Scene, hooks: Partial<EntityHooks> = {}) {
     this.renderer = scene ? new EntityRenderer(scene) : null
@@ -137,10 +146,16 @@ export class EntityManager {
   }
 
   get count(): number { return this.entities.size }
-  get passiveCount(): number { return [...this.entities.values()].filter(e => isPeacefulKind(e.kind)).length }
-  get villagerCount(): number { return [...this.entities.values()].filter(e => VILLAGER_KINDS.includes(e.kind as VillagerKind)).length }
-  get hostileCount(): number { return [...this.entities.values()].filter(e => HOSTILE_KINDS.includes(e.kind as HostileKind)).length }
+  get passiveCount(): number { return this.passiveN }
+  get villagerCount(): number { return this.villagerN }
+  get hostileCount(): number { return this.hostileN }
   get snapshots(): EntitySnapshot[] { return [...this.entities.values()].map(this.publicSnapshot) }
+
+  private countEntity(kind: MobKind, delta: number): void {
+    if (isPeacefulKind(kind)) this.passiveN += delta
+    else if (VILLAGER_KINDS.includes(kind as VillagerKind)) this.villagerN += delta
+    else this.hostileN += delta
+  }
 
   private publicSnapshot = (e: EntityState): EntitySnapshot => ({
     id: e.id, kind: e.kind, x: e.x, y: e.y, z: e.z, vx: e.vx, vy: e.vy, vz: e.vz,
@@ -155,14 +170,15 @@ export class EntityManager {
     hurtTime: e.hurtTime, deathTime: e.deathTime
   })
 
-  private chunkKey(x: number, z: number): string {
-    return Math.floor(x / CHUNK_SIZE) + ',' + Math.floor(z / CHUNK_SIZE)
+  /** Numeric chunk key — exact and collision-free for sane coordinates. */
+  private chunkKey(x: number, z: number): number {
+    return Math.floor(x / CHUNK_SIZE) * 0x100000000 + Math.floor(z / CHUNK_SIZE)
   }
 
-  private index(entity: EntityState, oldKey?: string): void {
+  private index(entity: EntityState, oldKey?: number): void {
     const nextKey = this.chunkKey(entity.x, entity.z)
     if (oldKey === nextKey) return
-    if (oldKey) {
+    if (oldKey !== undefined) {
       const old = this.spatial.get(oldKey)
       old?.delete(entity.id)
       if (old?.size === 0) this.spatial.delete(oldKey)
@@ -209,6 +225,7 @@ export class EntityManager {
       pendingLooting: 0
     }
     this.entities.set(id, entity)
+    this.countEntity(kind, 1)
     this.index(entity)
     return this.publicSnapshot(entity)
   }
@@ -219,6 +236,7 @@ export class EntityManager {
     const key = this.chunkKey(entity.x, entity.z)
     this.spatial.get(key)?.delete(id)
     this.entities.delete(id)
+    this.countEntity(entity.kind, -1)
     return true
   }
 
@@ -228,7 +246,7 @@ export class EntityManager {
     const minCz = Math.floor((z - radius) / CHUNK_SIZE), maxCz = Math.floor((z + radius) / CHUNK_SIZE)
     const r2 = radius * radius
     for (let cx = minCx; cx <= maxCx; cx++) for (let cz = minCz; cz <= maxCz; cz++) {
-      for (const id of this.spatial.get(cx + ',' + cz) ?? []) {
+      for (const id of this.spatial.get(cx * 0x100000000 + cz) ?? []) {
         const e = this.entities.get(id)
         if (e && (e.x - x) ** 2 + (e.y - y) ** 2 + (e.z - z) ** 2 <= r2) result.push(this.publicSnapshot(e))
       }
@@ -239,15 +257,19 @@ export class EntityManager {
   raycast(origin: THREE.Vector3, direction: THREE.Vector3, maxDistance: number): EntityRayHit | null {
     let best: EntityState | null = null
     let bestT = maxDistance
+    scratchRay.origin.copy(origin)
+    scratchRay.direction.copy(direction)
     for (const entity of this.entities.values()) {
       if (!entity.active || entity.health <= 0) continue
+      // cheap sphere reject before the box test (3.2 covers the largest mob box)
+      const ddx = entity.x - origin.x, ddy = entity.y - origin.y, ddz = entity.z - origin.z
+      const reach = bestT + 3.2
+      if (ddx * ddx + ddy * ddy + ddz * ddz > reach * reach) continue
       const scale = (entity.age < 0 ? 0.58 : 1) * (entity.sizeScale ?? 1)
       const half = entity.width * scale * 0.5
-      const box = new THREE.Box3(
-        new THREE.Vector3(entity.x - half, entity.y, entity.z - half),
-        new THREE.Vector3(entity.x + half, entity.y + entity.height * scale, entity.z + half)
-      )
-      const hit = new THREE.Ray(origin, direction).intersectBox(box, new THREE.Vector3())
+      scratchBox.min.set(entity.x - half, entity.y, entity.z - half)
+      scratchBox.max.set(entity.x + half, entity.y + entity.height * scale, entity.z + half)
+      const hit = scratchRay.intersectBox(scratchBox, scratchHit)
       if (!hit) continue
       const t = hit.distanceTo(origin)
       if (t < bestT) { bestT = t; best = entity }
@@ -373,7 +395,9 @@ export class EntityManager {
       this.accumulator -= STEP
       this.tick(STEP, context)
     }
-    this.renderer?.sync(this.snapshots, safeDt)
+    // EntityState is a superset of EntitySnapshot: hand the live states to the
+    // renderer directly instead of allocating a snapshot array every frame.
+    this.renderer?.sync(this.entities.values(), safeDt)
   }
 
   private tick(dt: number, context: EntityUpdateContext): void {
@@ -820,35 +844,38 @@ export class EntityManager {
   private separateEntities(): void {
     for (const entity of this.entities.values()) {
       if (!entity.active || entity.health <= 0) continue
-      for (const other of this.queryRadius(entity.x, entity.y, entity.z, 1.25)) {
-        if (other.id <= entity.id) continue
-        const target = this.entities.get(other.id)
-        if (!target || target.health <= 0) continue
-        const dx = target.x - entity.x, dz = target.z - entity.z
-        const distance = Math.hypot(dx, dz)
-        const min = (entity.width + target.width) * 0.42
-        if (distance <= 0.001 || distance >= min) continue
-        const push = (min - distance) * 0.5
-        this.pushIfFree(entity, -dx / distance * push, -dz / distance * push)
-        this.pushIfFree(target, dx / distance * push, dz / distance * push)
+      const minCx = Math.floor((entity.x - 1.25) / CHUNK_SIZE), maxCx = Math.floor((entity.x + 1.25) / CHUNK_SIZE)
+      const minCz = Math.floor((entity.z - 1.25) / CHUNK_SIZE), maxCz = Math.floor((entity.z + 1.25) / CHUNK_SIZE)
+      for (let cx = minCx; cx <= maxCx; cx++) for (let cz = minCz; cz <= maxCz; cz++) {
+        for (const id of this.spatial.get(cx * 0x100000000 + cz) ?? []) {
+          if (id <= entity.id) continue
+          const target = this.entities.get(id)
+          if (!target || target.health <= 0) continue
+          if (Math.abs(target.y - entity.y) > 1.25) continue
+          const dx = target.x - entity.x, dz = target.z - entity.z
+          const distance = Math.hypot(dx, dz)
+          const min = (entity.width + target.width) * 0.42
+          if (distance <= 0.001 || distance >= min) continue
+          const push = (min - distance) * 0.5
+          this.pushIfFree(entity, -dx / distance * push, -dz / distance * push)
+          this.pushIfFree(target, dx / distance * push, dz / distance * push)
+        }
       }
     }
-    this.rebuildSpatial()
   }
 
+  /** Nudges an entity sideways and keeps the spatial index in sync. */
   private pushIfFree(entity: EntityState, dx: number, dz: number): void {
     const oldX = entity.x, oldZ = entity.z
+    const oldKey = this.chunkKey(oldX, oldZ)
     entity.x += dx
     entity.z += dz
     if (this.collidesWorld(entity)) {
       entity.x = oldX
       entity.z = oldZ
+      return
     }
-  }
-
-  private rebuildSpatial(): void {
-    this.spatial.clear()
-    for (const entity of this.entities.values()) this.index(entity)
+    this.index(entity, oldKey)
   }
 
   private breedPairs(): void {
@@ -962,6 +989,7 @@ export class EntityManager {
   restore(saved: readonly SavedEntity[]): void {
     this.entities.clear()
     this.spatial.clear()
+    this.passiveN = this.villagerN = this.hostileN = 0
     for (const raw of saved.slice(0, ENTITY_HARD_CAP)) {
       const def = MOB_DEFINITIONS[raw.kind]
       if (!def || !raw.id || this.entities.has(raw.id)) continue
@@ -990,5 +1018,6 @@ export class EntityManager {
     this.renderer = null
     this.entities.clear()
     this.spatial.clear()
+    this.passiveN = this.villagerN = this.hostileN = 0
   }
 }

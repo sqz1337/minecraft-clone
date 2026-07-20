@@ -12,46 +12,34 @@ const WIND_VERTEX = /* glsl */`
 `
 
 export class Materials {
-  solid: THREE.MeshStandardMaterial
-  foliage: THREE.MeshStandardMaterial
-  foliageDepth: THREE.MeshDepthMaterial
-  glass: THREE.MeshStandardMaterial
+  solid: THREE.MeshLambertMaterial
+  foliage: THREE.MeshLambertMaterial
+  glass: THREE.MeshLambertMaterial
   emissive: THREE.MeshBasicMaterial
   furnaceFire: THREE.MeshBasicMaterial
-  chest: THREE.MeshStandardMaterial
-  largeChest: THREE.MeshStandardMaterial
+  chest: THREE.MeshLambertMaterial
+  largeChest: THREE.MeshLambertMaterial
   xrayOre: THREE.MeshBasicMaterial
   water: THREE.ShaderMaterial
 
   constructor(atlas: Atlas) {
-    this.solid = new THREE.MeshStandardMaterial({
+    // Lambert everywhere: AO, sky/block light and tinting are already baked
+    // into vertex colors by the mesher, so per-pixel PBR buys nothing here.
+    this.solid = new THREE.MeshLambertMaterial({
       map: atlas.colorTex,
-      roughness: 1,
-      metalness: 0,
       vertexColors: true
     })
 
-    this.foliage = new THREE.MeshStandardMaterial({
+    this.foliage = new THREE.MeshLambertMaterial({
       map: atlas.colorTex,
-      roughness: 1,
-      metalness: 0,
       vertexColors: true,
       alphaTest: 0.42,
       side: THREE.DoubleSide
     })
     this.injectWind(this.foliage)
 
-    this.foliageDepth = new THREE.MeshDepthMaterial({
-      depthPacking: THREE.RGBADepthPacking,
+    this.glass = new THREE.MeshLambertMaterial({
       map: atlas.colorTex,
-      alphaTest: 0.42
-    })
-    this.injectWind(this.foliageDepth)
-
-    this.glass = new THREE.MeshStandardMaterial({
-      map: atlas.colorTex,
-      roughness: 0.18,
-      metalness: 0,
       vertexColors: true,
       transparent: true,
       opacity: 0.58,
@@ -91,16 +79,8 @@ export class Materials {
     }
     this.furnaceFire.customProgramCacheKey = () => 'furnace-fire-v1'
 
-    this.chest = new THREE.MeshStandardMaterial({
-      map: atlas.chestTex,
-      roughness: 0.92,
-      metalness: 0
-    })
-    this.largeChest = new THREE.MeshStandardMaterial({
-      map: atlas.largeChestTex,
-      roughness: 0.92,
-      metalness: 0
-    })
+    this.chest = new THREE.MeshLambertMaterial({ map: atlas.chestTex })
+    this.largeChest = new THREE.MeshLambertMaterial({ map: atlas.largeChestTex })
 
     this.xrayOre = new THREE.MeshBasicMaterial({
       map: atlas.colorTex,

@@ -95,6 +95,15 @@ export class Environment {
 
   setWeather(w: WeatherOut): void { this.weather = w }
 
+  /** Toggling castShadow is enough: three recompiles affected programs itself. */
+  setShadowsEnabled(enabled: boolean): void {
+    this.sun.castShadow = enabled
+    if (!enabled && this.sun.shadow.map) {
+      this.sun.shadow.map.dispose()
+      this.sun.shadow.map = null
+    }
+  }
+
   setShadowMapSize(px: number): void {
     this.sun.shadow.mapSize.set(px, px)
     if (this.sun.shadow.map) {

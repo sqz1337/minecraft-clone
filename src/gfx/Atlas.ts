@@ -128,14 +128,21 @@ export class Atlas {
   canvas = document.createElement('canvas')
   tileAvg: [number, number, number][] = []
 
+  private uvRects: [number, number, number, number][] = []
+
+  /** UV rects are static per tile — cached so the mesher never allocates here. Do not mutate. */
   uvRect(tile: number): [number, number, number, number] {
-    const col = tile % GRID, row = Math.floor(tile / GRID)
-    const inset = 0.02 / ATLAS
-    const u0 = (col * TS) / ATLAS + inset
-    const u1 = ((col + 1) * TS) / ATLAS - inset
-    const v1 = 1 - (row * TS) / ATLAS - inset
-    const v0 = 1 - ((row + 1) * TS) / ATLAS + inset
-    return [u0, v0, u1, v1]
+    let rect = this.uvRects[tile]
+    if (!rect) {
+      const col = tile % GRID, row = Math.floor(tile / GRID)
+      const inset = 0.02 / ATLAS
+      const u0 = (col * TS) / ATLAS + inset
+      const u1 = ((col + 1) * TS) / ATLAS - inset
+      const v1 = 1 - (row * TS) / ATLAS - inset
+      const v0 = 1 - ((row + 1) * TS) / ATLAS + inset
+      this.uvRects[tile] = rect = [u0, v0, u1, v1]
+    }
+    return rect
   }
 
   async build(): Promise<void> {

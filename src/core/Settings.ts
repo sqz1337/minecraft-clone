@@ -3,6 +3,7 @@ export type GameMode = 'creative' | 'survival'
 
 export interface QualityPreset {
   renderDistance: number
+  shadows: boolean
   shadowSize: number
   pixelRatioCap: number
   grassDensity: number   // fraction of tall grass decorations kept
@@ -10,10 +11,10 @@ export interface QualityPreset {
 }
 
 export const QUALITIES: Record<QualityName, QualityPreset> = {
-  low: { renderDistance: 4, shadowSize: 1024, pixelRatioCap: 1, grassDensity: 0.35, particleMult: 0.4 },
-  medium: { renderDistance: 6, shadowSize: 2048, pixelRatioCap: 1.25, grassDensity: 0.6, particleMult: 0.7 },
-  high: { renderDistance: 7, shadowSize: 2048, pixelRatioCap: 1.5, grassDensity: 1, particleMult: 1 },
-  ultra: { renderDistance: 10, shadowSize: 4096, pixelRatioCap: 2, grassDensity: 1, particleMult: 1.4 }
+  low: { renderDistance: 4, shadows: false, shadowSize: 1024, pixelRatioCap: 1, grassDensity: 0.35, particleMult: 0.4 },
+  medium: { renderDistance: 6, shadows: false, shadowSize: 2048, pixelRatioCap: 1.25, grassDensity: 0.6, particleMult: 0.7 },
+  high: { renderDistance: 7, shadows: true, shadowSize: 2048, pixelRatioCap: 1.5, grassDensity: 1, particleMult: 1 },
+  ultra: { renderDistance: 10, shadows: true, shadowSize: 4096, pixelRatioCap: 2, grassDensity: 1, particleMult: 1.4 }
 }
 
 const STORAGE_KEY = 'realmcraft.settings.v1'

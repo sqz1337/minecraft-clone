@@ -35,7 +35,7 @@ function makeWorld() {
   chunk.state = ChunkState.GENERATED
   for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) chunk.set(x, 4, z, B.STONE)
   Object.assign(world, {
-    gen: { seedNum: 7, biomeAt: () => 2 }, chunks: new Map([['0,0', chunk]]),
+    gen: { seedNum: 7, biomeAt: () => 2 }, chunks: new Map([[0, chunk]]),
     blockEdits: new Map(), blockFacings: new Map(), editsDirty: false,
     scheduledTicks: [], simulationTick: 0, simulationAccumulator: 0,
     renderDistance: 4, grassDensity: 1, mutationBatchDepth: 0,

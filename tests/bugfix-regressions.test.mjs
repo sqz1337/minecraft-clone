@@ -53,11 +53,14 @@ function meshedChunk(cx, cz) {
   return chunk
 }
 
+// numeric chunk key, mirrors World.ck
+const ck = (cx, cz) => cx * 0x100000000 + cz
+
 test('interior block refresh does not relight four unaffected neighbor chunks', () => {
   const center = meshedChunk(0, 0)
   const chunks = new Map([
-    ['0,0', center], ['1,0', meshedChunk(1, 0)], ['-1,0', meshedChunk(-1, 0)],
-    ['0,1', meshedChunk(0, 1)], ['0,-1', meshedChunk(0, -1)]
+    [ck(0, 0), center], [ck(1, 0), meshedChunk(1, 0)], [ck(-1, 0), meshedChunk(-1, 0)],
+    [ck(0, 1), meshedChunk(0, 1)], [ck(0, -1), meshedChunk(0, -1)]
   ])
   const world = Object.create(World.prototype)
   Object.assign(world, { chunks, mutationBatchDepth: 0, dirtyChunkKeys: new Set() })
@@ -75,7 +78,7 @@ test('a changed light border still relights and remeshes its neighbor', () => {
   const east = meshedChunk(1, 0)
   const world = Object.create(World.prototype)
   Object.assign(world, {
-    chunks: new Map([['0,0', center], ['1,0', east]]),
+    chunks: new Map([[ck(0, 0), center], [ck(1, 0), east]]),
     mutationBatchDepth: 0, dirtyChunkKeys: new Set()
   })
   const relit = []

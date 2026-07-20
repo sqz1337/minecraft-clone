@@ -43,9 +43,9 @@ export interface SpawnOptions {
 
 export class ItemDrops {
   private drops: Drop[] = []
-  private material: THREE.MeshStandardMaterial
-  private flatMaterial: THREE.MeshStandardMaterial
-  private spriteMaterial: THREE.MeshStandardMaterial
+  private material: THREE.MeshLambertMaterial
+  private flatMaterial: THREE.MeshLambertMaterial
+  private spriteMaterial: THREE.MeshLambertMaterial
   private mergeTimer = MERGE_INTERVAL
   onPickup: () => void = () => {}
 
@@ -56,26 +56,20 @@ export class ItemDrops {
     private sprites: ItemSprites,
     private inventory: Inventory
   ) {
-    this.material = new THREE.MeshStandardMaterial({
+    this.material = new THREE.MeshLambertMaterial({
       map: atlas.colorTex,
-      roughness: 1,
-      metalness: 0,
       vertexColors: true,
       transparent: true,
       alphaTest: 0.08
     })
-    this.flatMaterial = new THREE.MeshStandardMaterial({
+    this.flatMaterial = new THREE.MeshLambertMaterial({
       map: atlas.colorTex,
-      roughness: 1,
-      metalness: 0,
       transparent: true,
       alphaTest: 0.08,
       side: THREE.DoubleSide
     })
-    this.spriteMaterial = new THREE.MeshStandardMaterial({
+    this.spriteMaterial = new THREE.MeshLambertMaterial({
       map: sprites.texture,
-      roughness: 1,
-      metalness: 0,
       transparent: true,
       alphaTest: 0.08,
       side: THREE.DoubleSide
@@ -88,7 +82,7 @@ export class ItemDrops {
     while (this.drops.length >= MAX_DROPS) this.removeAt(0)
 
     let geometry: THREE.BufferGeometry
-    let material: THREE.MeshStandardMaterial
+    let material: THREE.MeshLambertMaterial
     if (item.sprite) {
       geometry = new THREE.PlaneGeometry(0.45, 0.45)
       this.applyPlaneUv(geometry, this.sprites.uvRect(item.sprite[0], item.sprite[1]))

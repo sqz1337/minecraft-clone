@@ -44,7 +44,7 @@ function makeWorld() {
   chunk.state = ChunkState.GENERATED
   Object.assign(world, {
     gen: { seedNum: 1 },
-    chunks: new Map([['0,0', chunk]]),
+    chunks: new Map([[0, chunk]]),
     blockEdits: new Map(),
     blockFacings: new Map(),
     editsDirty: false,

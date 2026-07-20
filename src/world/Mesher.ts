@@ -37,86 +37,172 @@ const FACES: FaceDef[] = [
 const AO_CURVE = [0.42, 0.62, 0.8, 1.0]
 const WATER_SURFACE = 0.875
 
+/**
+ * Reusable growable vertex store. Meshing is synchronous, so one set of
+ * module-level builders is reset per chunk instead of reallocating dozens of
+ * plain JS number[] arrays on every remesh; build() copies exact-size slices
+ * into the geometry, which keeps ownership with three.js.
+ */
 class GeomBuilder {
-  pos: number[] = []
-  nrm: number[] = []
-  uv: number[] = []
-  col: number[] = []
-  sway: number[] = []
-  idx: number[] = []
+  private capacity: number
+  private pos: Float32Array
+  private nrm: Float32Array
+  private uv: Float32Array
+  private col: Float32Array
+  private sway: Float32Array
+  private idx: Uint32Array
   vcount = 0
+  private icount = 0
+
+  constructor(capacity = 4096) {
+    this.capacity = capacity
+    this.pos = new Float32Array(capacity * 3)
+    this.nrm = new Float32Array(capacity * 3)
+    this.uv = new Float32Array(capacity * 2)
+    this.col = new Float32Array(capacity * 3)
+    this.sway = new Float32Array(capacity)
+    this.idx = new Uint32Array((capacity * 3) >> 1)
+  }
+
+  reset(): void {
+    this.vcount = 0
+    this.icount = 0
+  }
+
+  private grow(): void {
+    this.capacity *= 2
+    const grown = (prev: Float32Array, stride: number): Float32Array => {
+      const next = new Float32Array(this.capacity * stride)
+      next.set(prev)
+      return next
+    }
+    this.pos = grown(this.pos, 3)
+    this.nrm = grown(this.nrm, 3)
+    this.uv = grown(this.uv, 2)
+    this.col = grown(this.col, 3)
+    this.sway = grown(this.sway, 1)
+    const idx = new Uint32Array((this.capacity * 3) >> 1)
+    idx.set(this.idx)
+    this.idx = idx
+  }
 
   vertex(x: number, y: number, z: number, nx: number, ny: number, nz: number, u: number, v: number, r: number, g: number, b: number, sw: number): void {
-    this.pos.push(x, y, z)
-    this.nrm.push(nx, ny, nz)
-    this.uv.push(u, v)
-    this.col.push(r, g, b)
-    this.sway.push(sw)
+    if (this.vcount >= this.capacity) this.grow()
+    const v3 = this.vcount * 3, v2 = this.vcount * 2
+    this.pos[v3] = x; this.pos[v3 + 1] = y; this.pos[v3 + 2] = z
+    this.nrm[v3] = nx; this.nrm[v3 + 1] = ny; this.nrm[v3 + 2] = nz
+    this.uv[v2] = u; this.uv[v2 + 1] = v
+    this.col[v3] = r; this.col[v3 + 1] = g; this.col[v3 + 2] = b
+    this.sway[this.vcount] = sw
     this.vcount++
   }
 
   quad(flip: boolean): void {
     const a = this.vcount - 4, b = a + 1, c = a + 2, d = a + 3
-    if (flip) this.idx.push(a, b, d, a, d, c)
-    else this.idx.push(a, b, c, c, b, d)
+    const idx = this.idx, i = this.icount
+    if (flip) {
+      idx[i] = a; idx[i + 1] = b; idx[i + 2] = d
+      idx[i + 3] = a; idx[i + 4] = d; idx[i + 5] = c
+    } else {
+      idx[i] = a; idx[i + 1] = b; idx[i + 2] = c
+      idx[i + 3] = c; idx[i + 4] = b; idx[i + 5] = d
+    }
+    this.icount += 6
   }
 
   build(withSway: boolean): THREE.BufferGeometry | null {
     if (this.vcount === 0) return null
     const g = new THREE.BufferGeometry()
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3))
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nrm, 3))
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2))
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3))
-    if (withSway) g.setAttribute('aSway', new THREE.Float32BufferAttribute(this.sway, 1))
-    g.setIndex(this.idx)
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, this.vcount * 3), 3))
+    g.setAttribute('normal', new THREE.BufferAttribute(this.nrm.slice(0, this.vcount * 3), 3))
+    g.setAttribute('uv', new THREE.BufferAttribute(this.uv.slice(0, this.vcount * 2), 2))
+    g.setAttribute('color', new THREE.BufferAttribute(this.col.slice(0, this.vcount * 3), 3))
+    if (withSway) g.setAttribute('aSway', new THREE.BufferAttribute(this.sway.slice(0, this.vcount), 1))
+    g.setIndex(new THREE.BufferAttribute(this.idx.slice(0, this.icount), 1))
     g.computeBoundingSphere()
     return g
   }
 }
 
 class WaterBuilder {
-  pos: number[] = []
-  nrm: number[] = []
-  top: number[] = []
-  idx: number[] = []
+  private capacity: number
+  private pos: Float32Array
+  private nrm: Float32Array
+  private top: Float32Array
+  private idx: Uint32Array
   vcount = 0
+  private icount = 0
+
+  constructor(capacity = 2048) {
+    this.capacity = capacity
+    this.pos = new Float32Array(capacity * 3)
+    this.nrm = new Float32Array(capacity * 3)
+    this.top = new Float32Array(capacity)
+    this.idx = new Uint32Array((capacity * 3) >> 1)
+  }
+
+  reset(): void {
+    this.vcount = 0
+    this.icount = 0
+  }
+
+  private grow(): void {
+    this.capacity *= 2
+    const pos = new Float32Array(this.capacity * 3); pos.set(this.pos); this.pos = pos
+    const nrm = new Float32Array(this.capacity * 3); nrm.set(this.nrm); this.nrm = nrm
+    const top = new Float32Array(this.capacity); top.set(this.top); this.top = top
+    const idx = new Uint32Array((this.capacity * 3) >> 1); idx.set(this.idx); this.idx = idx
+  }
 
   vertex(x: number, y: number, z: number, nx: number, ny: number, nz: number, isTop: number): void {
-    this.pos.push(x, y, z)
-    this.nrm.push(nx, ny, nz)
-    this.top.push(isTop)
+    if (this.vcount >= this.capacity) this.grow()
+    const v3 = this.vcount * 3
+    this.pos[v3] = x; this.pos[v3 + 1] = y; this.pos[v3 + 2] = z
+    this.nrm[v3] = nx; this.nrm[v3 + 1] = ny; this.nrm[v3 + 2] = nz
+    this.top[this.vcount] = isTop
     this.vcount++
   }
 
   quad(): void {
     const a = this.vcount - 4
-    this.idx.push(a, a + 1, a + 2, a + 2, a + 1, a + 3)
+    const idx = this.idx, i = this.icount
+    idx[i] = a; idx[i + 1] = a + 1; idx[i + 2] = a + 2
+    idx[i + 3] = a + 2; idx[i + 4] = a + 1; idx[i + 5] = a + 3
+    this.icount += 6
   }
 
   build(): THREE.BufferGeometry | null {
     if (this.vcount === 0) return null
     const g = new THREE.BufferGeometry()
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3))
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nrm, 3))
-    g.setAttribute('aTop', new THREE.Float32BufferAttribute(this.top, 1))
-    g.setIndex(this.idx)
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, this.vcount * 3), 3))
+    g.setAttribute('normal', new THREE.BufferAttribute(this.nrm.slice(0, this.vcount * 3), 3))
+    g.setAttribute('aTop', new THREE.BufferAttribute(this.top.slice(0, this.vcount), 1))
+    g.setIndex(new THREE.BufferAttribute(this.idx.slice(0, this.icount), 1))
     g.computeBoundingSphere()
     return g
   }
 }
 
-export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassDensity: number): ChunkGeoms {
+// Shared builder pool, reset at the start of every buildChunkGeoms call.
+const solidBuilder = new GeomBuilder(8192)
+const foliageBuilder = new GeomBuilder(4096)
+const glassBuilder = new GeomBuilder(512)
+const emissiveBuilder = new GeomBuilder(512)
+const furnaceFireBuilder = new GeomBuilder(64)
+const xrayBuilder = new GeomBuilder(512)
+const waterBuilder = new WaterBuilder(2048)
+
+export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassDensity: number, includeXray = false): ChunkGeoms {
   const bx = chunk.cx * CHUNK_SIZE
   const bz = chunk.cz * CHUNK_SIZE
   const seed = world.gen.seedNum
 
-  // cache the 3x3 chunk neighborhood for fast block sampling
-  const hood: (Uint8Array | null)[] = []
+  // cache the 3x3 chunk neighborhood for fast block and light sampling
+  const hood: (Chunk | null)[] = []
   for (let dz = -1; dz <= 1; dz++) {
     for (let dx = -1; dx <= 1; dx++) {
       const c = world.getChunk(chunk.cx + dx, chunk.cz + dz)
-      hood.push(c && c.state >= 1 ? c.blocks : null)
+      hood.push(c && c.state >= 1 ? c : null)
     }
   }
 
@@ -126,23 +212,41 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
     const lx = wx - bx, lz = wz - bz
     const ncx = lx < 0 ? -1 : lx >= CHUNK_SIZE ? 1 : 0
     const ncz = lz < 0 ? -1 : lz >= CHUNK_SIZE ? 1 : 0
-    const arr = hood[(ncz + 1) * 3 + (ncx + 1)]
-    if (!arr) return B.AIR
+    const c = hood[(ncz + 1) * 3 + (ncx + 1)]
+    if (!c) return B.AIR
     const ax = lx - ncx * CHUNK_SIZE, az = lz - ncz * CHUNK_SIZE
-    return arr[(((ax << 4) | az) << 7) | wy]
+    return c.blocks[(((ax << 4) | az) << 7) | wy]
+  }
+
+  /** max(sky, block) light straight from the cached neighborhood — mirrors World.getLightLevel. */
+  const sampleLight = (wx: number, wy: number, wz: number): number => {
+    if (wy >= WORLD_HEIGHT) return 15
+    if (wy < 0) return 0
+    const lx = wx - bx, lz = wz - bz
+    const ncx = lx < 0 ? -1 : lx >= CHUNK_SIZE ? 1 : 0
+    const ncz = lz < 0 ? -1 : lz >= CHUNK_SIZE ? 1 : 0
+    const c = hood[(ncz + 1) * 3 + (ncx + 1)]
+    if (!c) return 15
+    const index = ((((lx - ncx * CHUNK_SIZE) << 4) | (lz - ncz * CHUNK_SIZE)) << 7) | wy
+    const sky = c.skyLight[index], block = c.blockLight[index]
+    return sky > block ? sky : block
   }
 
   const solidForAO = (wx: number, wy: number, wz: number): boolean => OPAQUE[sample(wx, wy, wz)]
 
-  const solid = new GeomBuilder()
-  const foliage = new GeomBuilder()
-  const glass = new GeomBuilder()
-  const emissive = new GeomBuilder()
-  const furnaceFire = new GeomBuilder()
+  const facings = world.facingsForChunk(chunk.cx, chunk.cz)
+
+  const solid = solidBuilder
+  const foliage = foliageBuilder
+  const glass = glassBuilder
+  const emissive = emissiveBuilder
+  const furnaceFire = furnaceFireBuilder
+  const xray = xrayBuilder
+  const water = waterBuilder
+  solid.reset(); foliage.reset(); glass.reset(); emissive.reset()
+  furnaceFire.reset(); xray.reset(); water.reset()
   const chest = new TexturedBoxBuilder()
   const largeChest = new TexturedBoxBuilder()
-  const xray = new GeomBuilder()
-  const water = new WaterBuilder()
   const blocks = chunk.blocks
 
   for (let lx = 0; lx < CHUNK_SIZE; lx++) {
@@ -160,7 +264,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
         if (id === B.CHEST) {
           const neighbors = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
           const pair = neighbors.find(([dx, dz]) => sample(wx + dx, y, wz + dz) === B.CHEST)
-          let facing = world.getBlockFacing(wx, y, wz)
+          let facing: HorizontalFace = facings?.get(colBase | y) ?? 4
           if (!pair) {
             addChestModel(chest, wx + 0.5, y, wz + 0.5, facing, false)
           } else {
@@ -178,7 +282,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           continue
         }
 
-        if (ORE[id]) {
+        if (includeXray && ORE[id]) {
           for (let f = 0; f < 6; f++) {
             const fd = FACES[f]
             const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, f))
@@ -258,7 +362,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           const jx = (hash01(wx, wz, seed ^ 0x71) - 0.5) * 0.3
           const jz = (hash01(wx, wz, seed ^ 0x72) - 0.5) * 0.3
           const useTint = id === B.TALLGRASS || id === B.FERN
-          const light = world.getLightLevel(wx, y, wz)
+          const light = sampleLight(wx, y, wz)
           const lightFactor = 0.28 + 0.72 * light / 15
           const r = (useTint ? tint[0] * 1.35 : 1) * lightFactor
           const g = (useTint ? tint[1] * 1.35 : 1) * lightFactor
@@ -286,7 +390,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           const alongZ = sample(wx, y, wz + 1) === B.RAIL || sample(wx, y, wz - 1) === B.RAIL
           const tile = alongX && alongZ ? TILE.RAIL_CURVED : TILE.RAIL
           const [u0, v0, u1, v1] = atlas.uvRect(tile)
-          const light = world.getLightLevel(wx, y, wz)
+          const light = sampleLight(wx, y, wz)
           const lightFactor = 0.28 + 0.72 * light / 15
           const ry = y + 0.0625
           // rotate the texture 90° when the track runs along X
@@ -302,13 +406,13 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
         }
 
         if (isBedBlock(id)) {
-          addBedBlock(solid, world, atlas, wx, y, wz, id)
+          addBedBlock(solid, atlas, wx, y, wz, id, facings?.get(colBase | y) ?? 4, sampleLight(wx, y + 1, wz), sample)
           continue
         }
 
         const isLeaf = isLeafBlock(id)
         const target = isLeaf ? foliage : id === B.GLASS ? glass : solid
-        const facing = world.getBlockFacing(wx, y, wz)
+        const facing: HorizontalFace = facings?.get(colBase | y) ?? 4
         // subtle per-block value variation breaks up flat regions
         const vary = 0.92 + hash301(wx, y, wz, seed ^ 0xc0de) * 0.14
 
@@ -330,7 +434,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
             const lv = 0.85 + hash301(wx >> 2, y >> 2, wz >> 2, seed ^ 0x1eaf) * 0.3
             tr *= lv; tg *= lv; tb *= lv * 0.95
           }
-          const light = world.getLightLevel(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
+          const light = sampleLight(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
           const lightFactor = 0.28 + 0.72 * light / 15
           tr *= lightFactor; tg *= lightFactor; tb *= lightFactor
 
@@ -397,16 +501,16 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
 /** Beds render as 9/16-tall boxes with facing-rotated top textures. */
 function addBedBlock(
   builder: GeomBuilder,
-  world: World,
   atlas: Atlas,
   wx: number,
   y: number,
   wz: number,
-  id: number
+  id: number,
+  facing: HorizontalFace,
+  light: number,
+  sample: (x: number, y: number, z: number) => number
 ): void {
-  const facing = world.getBlockFacing(wx, y, wz)
   const h = 0.5625
-  const light = world.getLightLevel(wx, y + 1, wz)
   const lf = 0.28 + 0.72 * light / 15
 
   const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 2, facing))
@@ -429,7 +533,7 @@ function addBedBlock(
 
   for (const f of [0, 1, 4, 5] as const) {
     const fd = FACES[f]
-    const nb = world.getBlock(wx + fd.n[0], y, wz + fd.n[2])
+    const nb = sample(wx + fd.n[0], y, wz + fd.n[2])
     if (isBedBlock(nb)) continue
     const [su0, sv0, su1, sv1] = atlas.uvRect(tileFor(id, f, facing))
     const vLo = sv0, vHi = sv0 + (sv1 - sv0) * h
@@ -447,7 +551,7 @@ function addBedBlock(
     builder.quad(false)
   }
 
-  if (!OPAQUE[world.getBlock(wx, y - 1, wz)]) {
+  if (!OPAQUE[sample(wx, y - 1, wz)]) {
     const fd = FACES[3]
     const [bu0, bv0, bu1, bv1] = atlas.uvRect(tileFor(id, 3, facing))
     for (let ci = 0; ci < 4; ci++) {

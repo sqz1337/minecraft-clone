@@ -26,6 +26,9 @@ interface BoxUv {
 
 const TEXTURE_WIDTH = 64
 const TEXTURE_HEIGHT = 32
+const PROFESSION_COLORS: Record<VillagerProfession, number> = {
+  farmer: 0xffffff, librarian: 0xf2e7d0, blacksmith: 0xc9c9c9, butcher: 0xf3d2d2, priest: 0xd7c1e8
+}
 const MOB_ROOT = `${import.meta.env.BASE_URL}assets/minecraft/mob/`
 const MOVE_SMOOTH_SECONDS = 1 / 20
 
@@ -135,7 +138,9 @@ export class EntityRenderer {
     const mesh = new THREE.Mesh(geometry, material)
     mesh.position.set(...pos)
     mesh.rotation.x = rotationX
-    mesh.castShadow = true
+    // Only the main body/head boxes opt back in to shadow casting; rendering
+    // every limb into the shadow map costs far more than it shows.
+    mesh.castShadow = false
     mesh.receiveShadow = true
     parent.add(mesh)
     return mesh
@@ -185,7 +190,7 @@ export class EntityRenderer {
     // -PI/2 lays the tall body box down so its "belly" strip (udder for cows)
     // faces down. +PI/2 would put the belly texture — and the cow udder — on
     // the spine, which reads as a stray pink "snout" on the animal's back.
-    this.box(group, bodySize, [0, cow ? 0.94 : 0.88, 0.08], material, bodyUv, -Math.PI / 2)
+    this.box(group, bodySize, [0, cow ? 0.94 : 0.88, 0.08], material, bodyUv, -Math.PI / 2).castShadow = true
 
     const headUv: BoxUv = cow
       ? { u: 0, v: 0, width: 8, height: 8, depth: 6 }
@@ -194,6 +199,7 @@ export class EntityRenderer {
         : { u: 0, v: 0, width: 8, height: 8, depth: 8 }
     const headSize: [number, number, number] = cow ? [0.68, 0.68, 0.52] : sheep ? [0.54, 0.54, 0.64] : [0.66, 0.66, 0.66]
     const head = this.box(group, headSize, [0, cow ? 1.18 : 1.08, -0.72], material, headUv)
+    head.castShadow = true
 
     if (kind === 'pig') {
       this.box(head, [0.34, 0.25, 0.1], [0, -0.07, -0.38], material,
@@ -241,9 +247,10 @@ export class EntityRenderer {
     const legs: THREE.Object3D[] = []
     const H = 64 // villager.png is 64x64, not the classic 64x32
     this.box(group, [0.52, 0.78, 0.32], [0, 1.14, 0], material,
-      { u: 16, v: 16, width: 8, height: 12, depth: 4 }, 0, H)
+      { u: 16, v: 16, width: 8, height: 12, depth: 4 }, 0, H).castShadow = true
     const head = this.box(group, [0.56, 0.62, 0.56], [0, 1.82, 0], material,
       { u: 0, v: 0, width: 8, height: 10, depth: 8 }, 0, H)
+    head.castShadow = true
     this.box(head, [0.16, 0.28, 0.16], [0, -0.05, -0.35], material,
       { u: 24, v: 0, width: 2, height: 4, depth: 2 }, 0, H)
     for (const x of [-0.14, 0.14]) legs.push(this.box(group, [0.24, 0.72, 0.25], [x, 0.36, 0], material,
@@ -263,7 +270,7 @@ export class EntityRenderer {
     const material = this.materials.get('chicken')!
     const legs: THREE.Object3D[] = []
     this.box(model, [0.58, 0.78, 0.58], [0, 0.78, 0.04], material,
-      { u: 0, v: 9, width: 6, height: 8, depth: 6 }, Math.PI / 2)
+      { u: 0, v: 9, width: 6, height: 8, depth: 6 }, Math.PI / 2).castShadow = true
     const head = this.box(model, [0.4, 0.52, 0.34], [0, 1.22, -0.3], material,
       { u: 0, v: 0, width: 4, height: 6, depth: 3 })
     this.box(head, [0.34, 0.16, 0.18], [0, -0.02, -0.25], material,
@@ -291,8 +298,10 @@ export class EntityRenderer {
     const armHeight = tall ? 1.25 : 0.75
     const body = this.box(group, [thin ? 0.38 : 0.5, bodyHeight, thin ? 0.25 : 0.28], [0, legHeight + bodyHeight * 0.5, 0], material,
       { u: 16, v: 16, width: 8, height: 12, depth: 4 })
+    body.castShadow = true
     const head = this.box(group, [tall ? 0.48 : 0.5, tall ? 0.48 : 0.5, tall ? 0.42 : 0.5], [0, legHeight + bodyHeight + 0.25, 0], material,
       { u: 0, v: 0, width: 8, height: 8, depth: 8 })
+    head.castShadow = true
     const legs: THREE.Object3D[] = []
     for (const x of [-0.13, 0.13]) legs.push(this.box(group, [thin ? 0.14 : 0.23, legHeight, 0.24], [x, legHeight * 0.5, 0], material,
       { u: 0, v: 16, width: 4, height: 12, depth: 4 }))
@@ -319,8 +328,9 @@ export class EntityRenderer {
 
   private creeper(): EntityView {
     const group = new THREE.Group(), material = this.materials.get('creeper')!
-    this.box(group, [0.52, 0.82, 0.32], [0, 0.83, 0], material, { u: 16, v: 16, width: 8, height: 12, depth: 4 })
+    this.box(group, [0.52, 0.82, 0.32], [0, 0.83, 0], material, { u: 16, v: 16, width: 8, height: 12, depth: 4 }).castShadow = true
     const head = this.box(group, [0.58, 0.58, 0.58], [0, 1.53, 0], material, { u: 0, v: 0, width: 8, height: 8, depth: 8 })
+    head.castShadow = true
     const legs: THREE.Object3D[] = []
     for (const x of [-0.18, 0.18]) for (const z of [-0.15, 0.15]) legs.push(this.box(group, [0.24, 0.48, 0.24], [x, 0.24, z], material,
       { u: 0, v: 16, width: 4, height: 6, depth: 4 }))
@@ -329,8 +339,9 @@ export class EntityRenderer {
 
   private spider(): EntityView {
     const group = new THREE.Group(), material = this.materials.get('spider')!
-    this.box(group, [0.82, 0.52, 0.92], [0, 0.48, 0.16], material, { u: 0, v: 12, width: 10, height: 8, depth: 12 })
+    this.box(group, [0.82, 0.52, 0.92], [0, 0.48, 0.16], material, { u: 0, v: 12, width: 10, height: 8, depth: 12 }).castShadow = true
     const head = this.box(group, [0.62, 0.48, 0.62], [0, 0.48, -0.58], material, { u: 32, v: 4, width: 8, height: 8, depth: 8 })
+    head.castShadow = true
     this.box(head, [0.64, 0.5, 0.64], [0, 0, 0], this.eyeMaterials.get('spider')!, { u: 32, v: 4, width: 8, height: 8, depth: 8 })
     const legs: THREE.Object3D[] = []
     for (const side of [-1, 1]) for (let i = 0; i < 4; i++) {
@@ -345,6 +356,7 @@ export class EntityRenderer {
   private slime(): EntityView {
     const group = new THREE.Group(), material = this.materials.get('slime')!
     const head = this.box(group, [1.1, 1.1, 1.1], [0, 0.56, 0], material, { u: 0, v: 16, width: 8, height: 8, depth: 8 })
+    head.castShadow = true
     return this.view(group, [], head)
   }
 
@@ -362,7 +374,7 @@ export class EntityRenderer {
     return view
   }
 
-  sync(entities: readonly EntitySnapshot[], dt: number): void {
+  sync(entities: Iterable<EntitySnapshot>, dt: number): void {
     const live = new Set<string>()
     for (const entity of entities) {
       live.add(entity.id)
@@ -407,11 +419,8 @@ export class EntityRenderer {
       const scale = (entity.age < 0 ? 0.58 : 1) * (entity.sizeScale ?? 1)
       view.group.scale.setScalar(scale)
       const hurt = entity.hurtTime > 0 || (entity.deathTime > 0 && deathProgress < 0.35)
-      const professionColors: Record<VillagerProfession, number> = {
-        farmer: 0xffffff, librarian: 0xf2e7d0, blacksmith: 0xc9c9c9, butcher: 0xf3d2d2, priest: 0xd7c1e8
-      }
       const baseColor = entity.kind === 'villager' && entity.profession
-        ? professionColors[entity.profession]
+        ? PROFESSION_COLORS[entity.profession]
         : 0xffffff
       for (const material of view.materials) {
         material.color.setHex(hurt ? 0xff5555 : baseColor)
