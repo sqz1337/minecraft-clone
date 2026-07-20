@@ -25,6 +25,7 @@ const NAME_OVERRIDES: Readonly<Record<string, string | null>> = {
   compass: 'compass_16',
   clock: 'clock_00',
   bed: null, // 26.2 uses a composite two-block model; keep the existing bed icon for now.
+  emerald: null, // no extracted vanilla asset (emerald is 1.3+); the tinted sprite is used instead
   map: 'filled_map'
 }
 

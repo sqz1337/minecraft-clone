@@ -41,7 +41,8 @@ export class Player {
   health = 20
   hunger = 20
   saturation = 5
-  air = 10
+  /** Seconds of air, vanilla 300 ticks = 15 s. */
+  air = 15
   exhaustion = 0
   armorPoints = 0
   protectionLevels = 0
@@ -66,6 +67,8 @@ export class Player {
   private stepAccum = 0
   private wasInWater = false
   private fallSpeedPeak = 0
+  /** Highest Y reached since last standing on ground; fall damage uses real height like vanilla. */
+  private fallPeakY = 0
   private coyote = 0
   private jumpBuffer = 0
   private swimStrokeTimer = 0
@@ -125,6 +128,7 @@ export class Player {
   teleport(x: number, y: number, z: number, yaw = 0, pitch = -0.08): void {
     this.pos.set(x, y, z)
     this.vel.set(0, 0, 0)
+    this.fallPeakY = y
     this.yaw = yaw
     this.pitch = clamp(pitch, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01)
     this.syncCamera(0)
@@ -142,11 +146,11 @@ export class Player {
     return this.flying
   }
 
-  restoreSurvival(health = 20, hunger = 20, saturation = 5, air = 10, exhaustion = 0, experience = 0): void {
+  restoreSurvival(health = 20, hunger = 20, saturation = 5, air = 15, exhaustion = 0, experience = 0): void {
     this.health = clamp(health, 1, 20)
     this.hunger = clamp(hunger, 0, 20)
     this.saturation = clamp(saturation, 0, this.hunger)
-    this.air = clamp(air, 0, 10)
+    this.air = clamp(air, 0, 15)
     this.exhaustion = Math.max(0, exhaustion)
     this.experienceTotal = Math.max(0, Math.floor(experience))
     this.dead = false
@@ -158,7 +162,7 @@ export class Player {
     this.health = 20
     this.hunger = 20
     this.saturation = 5
-    this.air = 10
+    this.air = 15
     this.exhaustion = 0
     this.dead = false
     this.damageCooldown = 0
@@ -356,6 +360,9 @@ export class Player {
     }
 
     if (!this.onGround && this.vel.y < this.fallSpeedPeak) this.fallSpeedPeak = this.vel.y
+    // water, lava and flight reset the accumulated fall like vanilla
+    if (this.onGround || this.inWater || this.inLava || freeFlight) this.fallPeakY = this.pos.y
+    else this.fallPeakY = Math.max(this.fallPeakY, this.pos.y)
 
     // integrate with substeps so fast falls can't tunnel through blocks
     const maxDisp = Math.max(Math.abs(this.vel.x), Math.abs(this.vel.y), Math.abs(this.vel.z)) * dt
@@ -414,14 +421,16 @@ export class Player {
         this.landDip = Math.min(0.3, impact * 0.014)
       }
       // classic rule: one damage per block fallen beyond three; feather falling softens it
-      const fallHeight = impact * impact / (2 * GRAVITY)
+      const fallHeight = this.fallPeakY - this.pos.y
       const raw = Math.ceil(fallHeight - 3.05)
       if (raw > 0 && !this.inWater) {
         const reduction = Math.min(0.8, Math.max(0, this.featherFallingLevel) * 0.2)
         const dealt = Math.round(raw * (1 - reduction))
-        if (dealt > 0) this.damage(dealt)
+        // fall damage ignores armor, like vanilla
+        if (dealt > 0) this.damage(dealt, true)
       }
       this.fallSpeedPeak = 0
+      this.fallPeakY = this.pos.y
     }
     if (this.onGround) {
       this.coyote = COYOTE_TIME
@@ -485,7 +494,8 @@ export class Player {
       this.fireDamageTimer -= dt
       if (this.fireDamageTimer <= 0) {
         this.fireDamageTimer = inLavaNow ? 0.65 : 1
-        this.damage(inLavaNow ? 4 : 1, true)
+        // lava and burning are reduced by armor, like vanilla
+        this.damage(inLavaNow ? 4 : 1)
       }
     } else if (this.burnTime > 0) {
       // lingering burn after leaving the fire source
@@ -493,7 +503,7 @@ export class Player {
       this.fireDamageTimer -= dt
       if (this.fireDamageTimer <= 0) {
         this.fireDamageTimer = 1
-        this.damage(1, true)
+        this.damage(1)
       }
     } else {
       this.fireDamageTimer = 0
@@ -533,11 +543,12 @@ export class Player {
         this.drownTimer -= dt
         if (this.drownTimer <= 0) {
           this.drownTimer = 1
-          this.damage(2)
+          // drowning ignores armor, like vanilla
+          this.damage(2, true)
         }
       }
     } else {
-      this.air = Math.min(10, this.air + dt * 4)
+      this.air = Math.min(15, this.air + dt * 4)
       this.drownTimer = 1
     }
 
@@ -545,7 +556,8 @@ export class Player {
       this.hungerTimer -= dt
       if (this.hungerTimer <= 0) {
         this.hungerTimer = 4
-        this.damage(1)
+        // starvation ignores armor, like vanilla
+        this.damage(1, true)
       }
     } else {
       this.hungerTimer = 4

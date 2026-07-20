@@ -10,6 +10,8 @@ import type { FurnaceState } from '../world/Containers'
 import type { MinecraftFont } from './MinecraftFont'
 import type { Equipment } from '../player/Equipment'
 import { stackDisplayName, type EnchantingState } from '../player/Enchantments'
+import { VILLAGER_TRADES } from '../entities/Trades'
+import type { VillagerProfession } from '../entities/EntityTypes'
 
 function el<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id)
@@ -38,6 +40,7 @@ export type UIScreen =
   | { kind: 'chest'; slots: Array<ItemStack | null>; holder: CursorHolder; double: boolean }
   | { kind: 'furnace'; state: FurnaceState; holder: CursorHolder }
   | { kind: 'enchant'; holder: EnchantingState }
+  | { kind: 'trade'; holder: CursorHolder; profession: VillagerProfession }
   | { kind: 'admin' }
 
 export class UI {
@@ -54,6 +57,8 @@ export class UI {
   onContainerSlotClick: SlotHandler = () => {}
   onEnchantSlotClick: (button: SlotButton) => void = () => {}
   onEnchantOfferClick: (index: number) => void = () => {}
+  /** Click on a villager trade row. */
+  onTradeClick: (index: number) => void = () => {}
   /** Click on a craftable recipe in the workbench recipe book. */
   onRecipeClick: (index: number) => void = () => {}
   /** Click on an item in the temporary admin panel. */
@@ -75,6 +80,7 @@ export class UI {
   private furnaceWindow = el<HTMLDivElement>('furnace-window')
   private chestWindow = el<HTMLDivElement>('chest-window')
   private enchantWindow = el<HTMLDivElement>('enchant-window')
+  private tradeWindow = el<HTMLDivElement>('trade-window')
   private inventoryTitle = document.querySelector<HTMLDivElement>('.inventory-title')!
   private inventoryCraftingTitle = document.querySelector<HTMLDivElement>('.inventory-crafting-title')!
   private workbenchTitle = document.querySelector<HTMLDivElement>('.workbench-title')!
@@ -84,6 +90,8 @@ export class UI {
   private chestInventoryTitle = document.querySelector<HTMLDivElement>('.chest-inventory-title')!
   private enchantTitle = document.querySelector<HTMLDivElement>('.enchant-title')!
   private enchantPower = document.querySelector<HTMLDivElement>('.enchant-power')!
+  private tradeTitle = document.querySelector<HTMLDivElement>('.trade-title')!
+  private tradeInventoryTitle = document.querySelector<HTMLDivElement>('.trade-inventory-title')!
   private furnaceFlame = el<HTMLDivElement>('furnace-flame')
   private furnaceArrow = el<HTMLDivElement>('furnace-arrow')
   private recipeToggle = el<HTMLButtonElement>('recipe-toggle')
@@ -218,6 +226,7 @@ export class UI {
     this.furnaceInventoryTitle.replaceChildren(this.font.createCanvas('Inventory', '#404040', false))
     this.chestInventoryTitle.replaceChildren(this.font.createCanvas('Inventory', '#404040', false))
     this.enchantTitle.replaceChildren(this.font.createCanvas('Enchant', '#404040', false))
+    this.tradeInventoryTitle.replaceChildren(this.font.createCanvas('Inventory', '#404040', false))
     document.querySelector<HTMLDivElement>('.recipe-book-title')!
       .replaceChildren(this.font.createCanvas('Recipes', '#404040', false))
     document.querySelector<HTMLDivElement>('.admin-title')!
@@ -238,12 +247,17 @@ export class UI {
     this.furnaceWindow.classList.toggle('hidden', kind !== 'furnace')
     this.chestWindow.classList.toggle('hidden', kind !== 'chest')
     this.enchantWindow.classList.toggle('hidden', kind !== 'enchant')
+    this.tradeWindow.classList.toggle('hidden', kind !== 'trade')
     this.adminWindow.classList.toggle('hidden', kind !== 'admin')
     if (screen?.kind === 'chest') {
       this.chestWindow.classList.toggle('double', screen.double)
       this.chestTitle.replaceChildren(
         this.font.createCanvas(screen.double ? 'Large Chest' : 'Chest', '#404040', false)
       )
+    }
+    if (screen?.kind === 'trade') {
+      const profession = screen.profession[0].toUpperCase() + screen.profession.slice(1)
+      this.tradeTitle.replaceChildren(this.font.createCanvas(`Villager - ${profession}`, '#404040', false))
     }
   }
 
@@ -354,8 +368,39 @@ export class UI {
       this.updateFurnace(screen.state)
     } else if (screen.kind === 'enchant') {
       this.renderEnchanting(screen.holder)
+    } else if (screen.kind === 'trade') {
+      this.renderTrades(screen.profession)
     }
     this.renderCursor()
+  }
+
+  /** Fixed villager trade rows: cost → result, greyed out when unaffordable. */
+  private renderTrades(profession: VillagerProfession): void {
+    const offers = el<HTMLDivElement>('trade-offers')
+    offers.innerHTML = ''
+    const counts = new Map<number, number>()
+    for (const stack of this.inventory!.slots) {
+      if (stack && stack.damage === undefined && !stack.enchantments?.length) {
+        counts.set(stack.id, (counts.get(stack.id) ?? 0) + stack.count)
+      }
+    }
+    VILLAGER_TRADES[profession].forEach((trade, index) => {
+      const affordable = (counts.get(trade.cost.id) ?? 0) >= trade.cost.count
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'trade-offer'
+      button.classList.toggle('unavailable', !affordable)
+      const cost = this.makeSlot(trade.cost.id, { id: trade.cost.id, count: trade.cost.count }, index, true)
+      const arrow = this.font.createCanvas('>', affordable ? '#404040' : '#8b3a3a', false)
+      const result = this.makeSlot(trade.result.id, { id: trade.result.id, count: trade.result.count }, index, true)
+      button.append(cost, arrow, result)
+      button.setAttribute(
+        'aria-label',
+        `Trade ${trade.cost.count} ${itemName(trade.cost.id)} for ${trade.result.count} ${itemName(trade.result.id)}`
+      )
+      button.addEventListener('click', () => { if (affordable) this.onTradeClick(index) })
+      offers.appendChild(button)
+    })
   }
 
   private makeClickableSlot(
@@ -619,11 +664,12 @@ export class UI {
     this.healthBar.innerHTML = this.statusIcons('heart', health)
     this.hungerBar.innerHTML = this.statusIcons('food', hunger)
     this.armorBar.innerHTML = armor > 0 ? this.statusIcons('armor', armor) : ''
-    this.airBar.classList.toggle('hidden', air >= 9.95)
+    // 15 seconds of air shown as the classic 10 bubbles (1.5 s per bubble)
+    this.airBar.classList.toggle('hidden', air >= 14.95)
     this.airBar.innerHTML = ''
     for (let i = 0; i < 10; i++) {
       const icon = document.createElement('span')
-      icon.className = `status-icon air ${i < Math.ceil(air) ? 'full' : 'empty'}`
+      icon.className = `status-icon air ${i < Math.ceil(air / 1.5) ? 'full' : 'empty'}`
       this.airBar.appendChild(icon)
     }
   }

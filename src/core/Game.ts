@@ -38,6 +38,7 @@ import { applyEnchantmentOffer, canEnchantItem, generateEnchantmentOffers, type 
 import { experienceAfterDeath } from '../player/Experience'
 import { rollLoot } from '../world/Loot'
 import { HOSTILE_KINDS, MOB_KINDS, VILLAGER_PROFESSIONS, type HostileKind, type MobKind, type VillagerProfession } from '../entities/EntityTypes'
+import { VILLAGER_TRADES } from '../entities/Trades'
 
 type GameState = 'title' | 'loading' | 'ready' | 'playing' | 'paused' | 'inventory' | 'chat'
 const SAVE_INTERVAL_SEC = 8
@@ -49,6 +50,7 @@ type OpenScreen =
   | { kind: 'chest'; holder: CursorHolder; slots: Array<ItemStack | null>; parts: ChestState[]; double: boolean }
   | { kind: 'furnace'; holder: CursorHolder; state: FurnaceState; x: number; y: number; z: number }
   | { kind: 'enchant'; holder: EnchantingState; x: number; y: number; z: number }
+  | { kind: 'trade'; holder: CursorHolder; profession: VillagerProfession }
   | { kind: 'admin' }
 
 export class Game {
@@ -152,6 +154,7 @@ export class Game {
     ui.onContainerSlotClick = (index, button) => this.containerSlotClick(index, button)
     ui.onEnchantSlotClick = (button) => this.enchantSlotClick(button)
     ui.onEnchantOfferClick = (index) => this.enchantOfferClick(index)
+    ui.onTradeClick = (index) => this.tradeClick(index)
     ui.onRecipeClick = (index) => this.recipeClick(index)
     ui.onAdminItemClick = (id, button) => this.adminItemClick(id, button)
     ui.onOutsideInventoryClick = (button) => this.outsideInventoryClick(button)
@@ -239,8 +242,8 @@ export class Game {
         if (hit) this.player.knockback(sourceX, sourceZ, knockback)
         return hit
       },
-      shootProjectile: (x, y, z, tx, ty, tz, damage) =>
-        this.projectiles.shootAt(x, y, z, tx, ty, tz, damage),
+      shootProjectile: (x, y, z, tx, ty, tz, damage, shooterId) =>
+        this.projectiles.shootAt(x, y, z, tx, ty, tz, damage, shooterId),
       explosion: (x, y, z) => {
         this.particles.burst(x, y, z, [0.45, 0.42, 0.38], 40) // dark debris
         this.particles.burst(x, y, z, [0.82, 0.80, 0.76], 26) // light smoke puff
@@ -276,6 +279,7 @@ export class Game {
     this.interaction.onUseMap = () => this.useMap()
     this.interaction.onUseNavigation = (id) => this.useNavigationItem(id)
     this.interaction.onBlockBroken = (x, y, z, id) => this.blockBroken(x, y, z, id)
+    this.interaction.onUseVillager = (entityId) => this.openTrading(entityId)
     this.interaction.onExperience = (x, y, z, amount) => this.experienceOrbs.spawn(x, y, z, amount)
     this.world.onAutomaticBlockBreak = (x, y, z, id) => this.interaction.dropAutomaticBlock(x, y, z, id)
     this.world.onTntPrimed = (x, y, z) => this.tntFx.add(x, y, z)
@@ -850,6 +854,48 @@ export class Game {
     this.openScreen({ kind: 'chest', holder: { cursor: null }, slots, parts, double })
   }
 
+  /** Right click on a villager: fixed emerald trades by profession. */
+  private openTrading(entityId: string): void {
+    const entity = this.entities.snapshotById(entityId)
+    if (!entity || entity.kind !== 'villager') return
+    this.audio.mob('villager', 'ambient')
+    this.openScreen({ kind: 'trade', holder: { cursor: null }, profession: entity.profession ?? 'farmer' })
+  }
+
+  private tradeClick(index: number): void {
+    const screen = this.screen
+    if (this.state !== 'inventory' || screen?.kind !== 'trade') return
+    const trade = VILLAGER_TRADES[screen.profession][index]
+    if (!trade || this.countPlainItems(trade.cost.id) < trade.cost.count) return
+    this.removePlainItems(trade.cost.id, trade.cost.count)
+    const left = this.inventory.add(trade.result.id, trade.result.count)
+    if (left > 0) this.spillStack({ id: trade.result.id, count: left })
+    this.audio.craft()
+    this.ui.renderScreen()
+  }
+
+  /** Counts undamaged, unenchanted items of one id across the inventory. */
+  private countPlainItems(id: number): number {
+    let total = 0
+    for (const stack of this.inventory.slots) {
+      if (stack && stack.id === id && stack.damage === undefined && !stack.enchantments?.length) total += stack.count
+    }
+    return total
+  }
+
+  private removePlainItems(id: number, count: number): void {
+    let left = count
+    for (let i = 0; i < this.inventory.slots.length && left > 0; i++) {
+      const stack = this.inventory.slots[i]
+      if (!stack || stack.id !== id || stack.damage !== undefined || stack.enchantments?.length) continue
+      const taken = Math.min(left, stack.count)
+      stack.count -= taken
+      left -= taken
+      if (stack.count <= 0) this.inventory.slots[i] = null
+    }
+    this.inventory.notify()
+  }
+
   private openEnchanting(x: number, y: number, z: number): void {
     const holder: EnchantingState = {
       cursor: null,
@@ -886,7 +932,7 @@ export class Game {
     if (screen) {
       if (screen.kind === 'inventory' || screen.kind === 'workbench') {
         screen.crafting.returnAll(this.inventory, (stack) => this.spillStack(stack))
-      } else if (screen.kind === 'chest' || screen.kind === 'furnace' || screen.kind === 'enchant') {
+      } else if (screen.kind === 'chest' || screen.kind === 'furnace' || screen.kind === 'enchant' || screen.kind === 'trade') {
         const loose = screen.kind === 'enchant' ? [...screen.holder.slots, screen.holder.cursor] : [screen.holder.cursor]
         returnStacks(loose, this.inventory, (stack) => this.spillStack(stack))
         screen.holder.cursor = null
@@ -1238,8 +1284,9 @@ export class Game {
     const p = this.player.pos
     for (const spawner of this.world.gen.structureSpawnersNear(p.x, p.z, 20)) {
       if (this.world.getBlock(spawner.x, spawner.y, spawner.z) !== B.SPAWNER) continue
+      // vanilla: a spawner is active within 16 blocks with no minimum distance
       const distance = Math.hypot(spawner.x + 0.5 - p.x, spawner.y + 0.5 - p.y, spawner.z + 0.5 - p.z)
-      if (distance > 16 || distance < 4) continue
+      if (distance > 16) continue
       const local = this.entities.queryRadius(spawner.x + 0.5, spawner.y, spawner.z + 0.5, 8)
         .filter(entity => entity.kind === spawner.mob).length
       if (local >= 6) continue

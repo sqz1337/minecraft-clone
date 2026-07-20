@@ -54,8 +54,8 @@ export interface DeathExperience {
   dropped: number
 }
 
-/** Death clears retained XP and turns up to 100 points into recoverable orbs. */
+/** Death clears retained XP; vanilla drops 7 × current level as orbs (capped at 100). */
 export function experienceAfterDeath(total: number): DeathExperience {
   const safe = Math.max(0, Math.floor(total))
-  return { retained: 0, dropped: Math.min(100, safe) }
+  return { retained: 0, dropped: Math.min(100, Math.min(safe, 7 * levelForExperience(safe))) }
 }

@@ -29,6 +29,7 @@ export class ItemSprites {
     // Mutton has no classic sprite: paint tinted porkchop copies into unused cells.
     this.paintTintedCopy(ctx, [7, 5], [0, 9], '#d4453f')  // raw mutton — redder meat
     this.paintTintedCopy(ctx, [8, 5], [1, 9], '#b4763c')  // cooked mutton — browner roast
+    this.paintTintedCopy(ctx, [7, 3], [2, 9], '#3fd65f')  // emerald — green diamond for trading
 
     this.texture = new THREE.CanvasTexture(this.canvas)
     this.texture.colorSpace = THREE.SRGBColorSpace

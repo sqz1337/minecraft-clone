@@ -35,7 +35,7 @@ export interface EntityWorld {
   getSkyLight?(x: number, y: number, z: number): number
   getBlockLight?(x: number, y: number, z: number): number
   setBlock?(x: number, y: number, z: number, id: number): void
-  primeTnt?(x: number, y: number, z: number, fuseTicks?: number): boolean
+  primeTnt?(x: number, y: number, z: number, fuseTicks?: number, scattered?: boolean): boolean
   batchBlocks?(action: () => void): void
 }
 
@@ -43,7 +43,7 @@ export interface EntityHooks {
   drop: (id: number, x: number, y: number, z: number, count: number) => void
   sound: (kind: MobKind, event: 'ambient' | 'hurt' | 'death' | 'step' | 'egg' | 'fuse') => void
   damagePlayer: (amount: number, sourceX: number, sourceZ: number, knockback: number) => boolean
-  shootProjectile: (x: number, y: number, z: number, tx: number, ty: number, tz: number, damage: number) => void
+  shootProjectile: (x: number, y: number, z: number, tx: number, ty: number, tz: number, damage: number, shooterId?: string) => void
   explosion: (x: number, y: number, z: number, radius: number) => void
   blockExploded: (x: number, y: number, z: number, id: number) => void
   experience: (x: number, y: number, z: number, amount: number) => void
@@ -62,7 +62,7 @@ export const VILLAGER_DEFINITIONS: Readonly<Record<VillagerKind, VillagerDefinit
 }
 
 export const HOSTILE_DEFINITIONS: Readonly<Record<HostileKind, HostileDefinition>> = {
-  zombie: { kind: 'zombie', category: 'hostile', maxHealth: 20, width: 0.6, height: 1.8, speed: 2.3, temptingItem: null, attackDamage: 4, followRange: 22, drops: [{ id: I.ROTTEN_FLESH, min: 0, max: 2 }] },
+  zombie: { kind: 'zombie', category: 'hostile', maxHealth: 20, width: 0.6, height: 1.8, speed: 2.3, temptingItem: null, attackDamage: 3, followRange: 22, drops: [{ id: I.ROTTEN_FLESH, min: 0, max: 2 }] },
   skeleton: { kind: 'skeleton', category: 'hostile', maxHealth: 20, width: 0.6, height: 1.8, speed: 2.15, temptingItem: null, attackDamage: 2, followRange: 24, drops: [{ id: I.BONE, min: 0, max: 2 }, { id: I.ARROW, min: 0, max: 2 }] },
   spider: { kind: 'spider', category: 'hostile', maxHealth: 16, width: 1.35, height: 0.9, speed: 3.35, temptingItem: null, attackDamage: 2, followRange: 20, drops: [{ id: I.STRING, min: 0, max: 2 }, { id: I.SPIDER_EYE, min: 1, max: 1, chance: 0.33 }] },
   creeper: { kind: 'creeper', category: 'hostile', maxHealth: 20, width: 0.6, height: 1.7, speed: 2.15, temptingItem: null, attackDamage: 0, followRange: 20, drops: [{ id: I.GUNPOWDER, min: 0, max: 2 }] },
@@ -89,6 +89,10 @@ interface EntityState extends EntitySnapshot {
   /** Remaining seconds of externally applied fire (Fire Aspect, Flame arrows). */
   forcedBurnTime: number
   pendingLooting: number
+  /** Highest Y since last standing on ground; fall damage = height − 3 like vanilla. */
+  fallPeakY: number
+  /** Mob that hurt this one (stray skeleton arrow etc.) — classic infighting target. */
+  revengeTargetId: string | null
 }
 
 export interface EntityUpdateContext {
@@ -151,6 +155,11 @@ export class EntityManager {
   get hostileCount(): number { return this.hostileN }
   get snapshots(): EntitySnapshot[] { return [...this.entities.values()].map(this.publicSnapshot) }
 
+  snapshotById(id: string): EntitySnapshot | null {
+    const entity = this.entities.get(id)
+    return entity ? this.publicSnapshot(entity) : null
+  }
+
   private countEntity(kind: MobKind, delta: number): void {
     if (isPeacefulKind(kind)) this.passiveN += delta
     else if (VILLAGER_KINDS.includes(kind as VillagerKind)) this.villagerN += delta
@@ -206,7 +215,8 @@ export class EntityManager {
     if (!options.bypassMobCap && (passive ? this.passiveCount >= PASSIVE_MOB_CAP : !villager && this.hostileCount >= HOSTILE_MOB_CAP)) return null
     const def = MOB_DEFINITIONS[kind]
     const sizeScale = kind === 'slime' ? clamp(options.sizeScale ?? 1, 0.25, 1) : 1
-    const maxHealth = kind === 'slime' && sizeScale < 1 ? 4 : def.maxHealth
+    // vanilla small slime has 1 HP
+    const maxHealth = kind === 'slime' && sizeScale < 1 ? 1 : def.maxHealth
     let id = options.id && !this.entities.has(options.id) ? options.id : ''
     while (!id || this.entities.has(id)) id = `${villager ? 'villager' : passive ? 'animal' : 'hostile'}-${this.nextId++}`
     const entity: EntityState = {
@@ -222,7 +232,7 @@ export class EntityManager {
       stepTime: 0, hurtCooldown: 0, hurtTime: 0, deathTime: 0,
       persistent: options.persistent ?? false,
       attackCooldown: 0, fuse: 0, angryTime: 0, burnTime: 0, forcedBurnTime: 0,
-      pendingLooting: 0
+      pendingLooting: 0, fallPeakY: y, revengeTargetId: null
     }
     this.entities.set(id, entity)
     this.countEntity(kind, 1)
@@ -254,13 +264,13 @@ export class EntityManager {
     return result
   }
 
-  raycast(origin: THREE.Vector3, direction: THREE.Vector3, maxDistance: number): EntityRayHit | null {
+  raycast(origin: THREE.Vector3, direction: THREE.Vector3, maxDistance: number, excludeId?: string): EntityRayHit | null {
     let best: EntityState | null = null
     let bestT = maxDistance
     scratchRay.origin.copy(origin)
     scratchRay.direction.copy(direction)
     for (const entity of this.entities.values()) {
-      if (!entity.active || entity.health <= 0) continue
+      if (!entity.active || entity.health <= 0 || entity.id === excludeId) continue
       // cheap sphere reject before the box test (3.2 covers the largest mob box)
       const ddx = entity.x - origin.x, ddy = entity.y - origin.y, ddz = entity.z - origin.z
       const reach = bestT + 3.2
@@ -277,7 +287,7 @@ export class EntityManager {
     return best ? { entity: this.publicSnapshot(best), distance: bestT } : null
   }
 
-  damage(id: string, amount: number, sourceX: number, sourceZ: number, knockback = 4.2, looting = 0): boolean {
+  damage(id: string, amount: number, sourceX: number, sourceZ: number, knockback = 4.2, looting = 0, attackerId?: string): boolean {
     const entity = this.entities.get(id)
     if (!entity || entity.health <= 0 || entity.hurtCooldown > 0 || amount <= 0) return false
     entity.health -= amount
@@ -285,6 +295,11 @@ export class EntityManager {
     entity.hurtTime = 0.5
     entity.panicTime = 4
     if (entity.kind === 'enderman') entity.angryTime = 30
+    // classic infighting: a mob hurt by another mob turns on its attacker
+    if (attackerId && attackerId !== id && entity.kind !== 'creeper' &&
+      HOSTILE_KINDS.includes(entity.kind as HostileKind)) {
+      entity.revengeTargetId = attackerId
+    }
     const dx = entity.x - sourceX, dz = entity.z - sourceZ
     const len = Math.hypot(dx, dz) || 1
     entity.vx += dx / len * knockback
@@ -314,9 +329,27 @@ export class EntityManager {
     const entity = this.entities.get(id)
     if (!entity || entity.kind !== 'sheep' || entity.age < 0 || entity.sheared) return 0
     entity.sheared = true
-    entity.woolTimer = 120 + Math.random() * 120
+    // delay before the first grass-eating attempt; wool only regrows by eating (vanilla)
+    entity.woolTimer = 5 + Math.random() * 10
     entity.persistent = true
     return 1 + Math.floor(Math.random() * 3)
+  }
+
+  /** Vanilla sheep regrow wool only by eating: a tall grass bush at their feet or the grass block below. */
+  private tryEatGrass(entity: EntityState): boolean {
+    if (!this.world.setBlock) return false
+    const x = Math.floor(entity.x), y = Math.floor(entity.y + 0.1), z = Math.floor(entity.z)
+    if (this.world.getBlock(x, y, z) === B.TALLGRASS) {
+      this.world.setBlock(x, y, z, B.AIR)
+      entity.sheared = false
+      return true
+    }
+    if (this.world.getBlock(x, y - 1, z) === B.GRASS) {
+      this.world.setBlock(x, y - 1, z, B.DIRT)
+      entity.sheared = false
+      return true
+    }
+    return false
   }
 
   /** Endermen blink to a nearby free spot when hurt. */
@@ -335,6 +368,7 @@ export class EntityManager {
         entity.z = tz
         if (!this.collidesWorld(entity) && !this.world.isWater(Math.floor(tx), y, Math.floor(tz))) {
           entity.vx = entity.vy = entity.vz = 0
+          entity.fallPeakY = entity.y
           return true
         }
         entity.x = oldX; entity.y = oldY; entity.z = oldZ
@@ -370,7 +404,7 @@ export class EntityManager {
           small.vy = 3
         }
       }
-      this.hooks.experience(entity.x, entity.y + 0.5, entity.z, 2)
+      this.hooks.experience(entity.x, entity.y + 0.5, entity.z, 4)
       return
     }
     for (const drop of def.drops) {
@@ -380,9 +414,10 @@ export class EntityManager {
         (looting > 0 ? Math.floor(Math.random() * (looting + 1)) : 0)
       if (count > 0) this.hooks.drop(drop.id, entity.x, entity.y + 0.45, entity.z, count)
     }
+    // only small slimes reach this branch (big ones split above); vanilla gives them 1 XP
     const xp = isPeacefulKind(entity.kind)
       ? (entity.age < 0 ? 0 : 1 + Math.floor(Math.random() * 3))
-      : entity.kind === 'villager' ? 0 : entity.kind === 'slime' ? 3 : 5
+      : entity.kind === 'villager' ? 0 : entity.kind === 'slime' ? 1 : 5
     if (xp > 0) this.hooks.experience(entity.x, entity.y + 0.5, entity.z, xp)
     this.remove(entity.id)
   }
@@ -445,14 +480,18 @@ export class EntityManager {
           entity.eggTimer = 300 + Math.random() * 300
         }
       }
-      if (entity.sheared && entity.age === 0) {
+      if (entity.kind === 'sheep' && entity.sheared && entity.age === 0) {
         entity.woolTimer = Math.max(0, (entity.woolTimer ?? 0) - dt)
-        if (entity.woolTimer <= 0) entity.sheared = false
+        if (entity.woolTimer <= 0) {
+          entity.woolTimer = 4 + Math.random() * 6
+          this.tryEatGrass(entity)
+        }
       }
       const bodyBlock = this.world.getBlock(Math.floor(entity.x), Math.floor(entity.y + entity.height * 0.35), Math.floor(entity.z))
       const lavaBurn = isLava(bodyBlock)
       const fireBurn = bodyBlock === B.FIRE
-      const sunBurn = (entity.kind === 'zombie' || entity.kind === 'skeleton') && this.isSunlit(entity, context)
+      // vanilla: sun burning is suppressed while the mob stands in water
+      const sunBurn = (entity.kind === 'zombie' || entity.kind === 'skeleton') && !entity.inWater && this.isSunlit(entity, context)
       const waterHurt = entity.kind === 'enderman' && entity.inWater
       if (entity.inWater) entity.forcedBurnTime = 0
       else entity.forcedBurnTime = Math.max(0, entity.forcedBurnTime - dt)
@@ -583,6 +622,7 @@ export class EntityManager {
 
   private hostileAi(entity: EntityState, context: EntityUpdateContext, dt: number): void {
     const def = HOSTILE_DEFINITIONS[entity.kind as HostileKind]
+    if (this.pursueRevengeTarget(entity, def, dt)) return
     const dx = context.player.x - entity.x
     const dz = context.player.z - entity.z
     const dy = context.player.y + 0.9 - (entity.y + entity.height * 0.5)
@@ -619,7 +659,7 @@ export class EntityManager {
         entity.vx *= 0.72; entity.vz *= 0.72
         if (entity.fuse >= 1.5) {
           this.remove(entity.id)
-          this.explode(entity.x, entity.y + 0.8, entity.z, 3.5, context.player)
+          this.explode(entity.x, entity.y + 0.8, entity.z, 3, context.player)
         }
         return
       }
@@ -632,7 +672,7 @@ export class EntityManager {
           entity.attackCooldown = 1.55 + Math.random() * 0.45
           this.hooks.shootProjectile(
             entity.x, entity.y + 1.45, entity.z,
-            context.player.x, context.player.y + 1.15, context.player.z, 3
+            context.player.x, context.player.y + 1.15, context.player.z, 3, entity.id
           )
         }
         const strafe = Math.atan2(dz, dx) + Math.PI / 2
@@ -644,12 +684,40 @@ export class EntityManager {
 
     this.steer(entity, context.player.x, context.player.z, def.speed, dt)
     const meleeRange = Math.max(1.25, entity.width * (entity.sizeScale ?? 1) * 0.5 + 0.9)
-    const attackDamage = entity.kind === 'slime' && (entity.sizeScale ?? 1) < 1 ? 1 : def.attackDamage
+    // vanilla small slimes are harmless
+    const attackDamage = entity.kind === 'slime' && (entity.sizeScale ?? 1) < 1 ? 0 : def.attackDamage
     if (distance < meleeRange && entity.attackCooldown <= 0 && attackDamage > 0) {
       if (this.hooks.damagePlayer(attackDamage, entity.x, entity.z, entity.kind === 'enderman' ? 5 : 3.2)) {
         entity.attackCooldown = entity.kind === 'spider' ? 0.8 : 1
       }
     }
+  }
+
+  /**
+   * Classic skeleton-vs-zombie style infighting: a mob hurt by another mob
+   * chases and melees the attacker until one of them dies or gets out of range.
+   */
+  private pursueRevengeTarget(entity: EntityState, def: HostileDefinition, dt: number): boolean {
+    if (!entity.revengeTargetId) return false
+    const target = this.entities.get(entity.revengeTargetId)
+    if (!target || target.health <= 0) {
+      entity.revengeTargetId = null
+      return false
+    }
+    const dx = target.x - entity.x, dz = target.z - entity.z
+    const dy = target.y + target.height * 0.5 - (entity.y + entity.height * 0.5)
+    const distance = Math.hypot(dx, dy, dz)
+    if (distance > def.followRange) {
+      entity.revengeTargetId = null
+      return false
+    }
+    this.steer(entity, target.x, target.z, def.speed, dt)
+    const meleeRange = Math.max(1.25, (entity.width * (entity.sizeScale ?? 1) + target.width) * 0.5 + 0.9)
+    const attackDamage = entity.kind === 'slime' && (entity.sizeScale ?? 1) < 1 ? 0 : def.attackDamage
+    if (distance < meleeRange && entity.attackCooldown <= 0 && attackDamage > 0) {
+      if (this.damage(target.id, attackDamage, entity.x, entity.z, 3.2, 0, entity.id)) entity.attackCooldown = 1
+    }
+    return true
   }
 
   /**
@@ -722,18 +790,20 @@ export class EntityManager {
   }
 
   /** Shared creeper/TNT-ready explosion engine: radial damage, knockback and block destruction. */
-  explode(x: number, y: number, z: number, radius: number, player?: { x: number; y: number; z: number }): void {
+  explode(x: number, y: number, z: number, power: number, player?: { x: number; y: number; z: number }): void {
+    // entity damage reaches 2×power blocks like vanilla; block destruction stays at ~power
     for (const target of [...this.entities.values()]) {
       const distance = Math.hypot(target.x - x, target.y + target.height * 0.5 - y, target.z - z)
-      const amount = explosionDamage(distance, radius)
+      const amount = explosionDamage(distance, power)
       if (amount > 0) this.damage(target.id, amount, x, z)
     }
     if (player) {
       const distance = Math.hypot(player.x - x, player.y + 0.9 - y, player.z - z)
-      const amount = explosionDamage(distance, radius)
-      if (amount > 0) this.hooks.damagePlayer(amount, x, z, 6 * (1 - distance / radius))
+      const amount = explosionDamage(distance, power)
+      if (amount > 0) this.hooks.damagePlayer(amount, x, z, 6 * (1 - distance / (2 * power)))
     }
     if (this.world.setBlock) {
+      const radius = power
       const r = Math.ceil(radius)
       const destroy = () => {
         for (let bx = Math.floor(x) - r; bx <= Math.floor(x) + r; bx++) {
@@ -743,7 +813,8 @@ export class EntityManager {
               const id = this.world.getBlock(bx, by, bz)
               if (id !== B.AIR && id !== B.BEDROCK && id !== B.OBSIDIAN && id !== B.PRIMED_TNT && distance < radius * (0.72 + Math.random() * 0.35)) {
                 if (id === B.TNT && this.world.primeTnt) {
-                  this.world.primeTnt(bx, by, bz, 10 + Math.floor(Math.random() * 21))
+                  // chained TNT gets a short random fuse and may be tossed aside (cannon-ish)
+                  this.world.primeTnt(bx, by, bz, 10 + Math.floor(Math.random() * 21), true)
                 } else {
                   this.world.setBlock!(bx, by, bz, B.AIR)
                   this.hooks.blockExploded(bx, by, bz, id)
@@ -756,7 +827,7 @@ export class EntityManager {
       if (this.world.batchBlocks) this.world.batchBlocks(destroy)
       else destroy()
     }
-    this.hooks.explosion(x, y, z, radius)
+    this.hooks.explosion(x, y, z, power)
   }
 
   private physics(entity: EntityState, dt: number): void {
@@ -766,11 +837,35 @@ export class EntityManager {
       entity.vx *= 0.92; entity.vz *= 0.92; entity.vy *= 0.88
     } else entity.vy -= GRAVITY * dt
     entity.vy = Math.max(entity.vy, -18)
+    // chickens flutter down slowly like vanilla — that is also why they take no fall damage
+    if (entity.kind === 'chicken' && !entity.inWater && entity.vy < -3) entity.vy = -3
     const wasGrounded = entity.onGround
     entity.onGround = false
     this.moveAxis(entity, 'x', entity.vx * dt, wasGrounded)
     this.moveAxis(entity, 'z', entity.vz * dt, wasGrounded)
     this.moveAxis(entity, 'y', entity.vy * dt)
+    if (entity.onGround || entity.inWater) {
+      if (!wasGrounded && entity.onGround && !entity.inWater) this.applyFallDamage(entity)
+      entity.fallPeakY = entity.y
+    } else {
+      entity.fallPeakY = Math.max(entity.fallPeakY ?? entity.y, entity.y)
+    }
+  }
+
+  /** Vanilla: mobs take (fall height − 3) damage on landing; chickens glide and are exempt. */
+  private applyFallDamage(entity: EntityState): void {
+    if (entity.kind === 'chicken' || entity.health <= 0) return
+    const amount = Math.ceil((entity.fallPeakY ?? entity.y) - entity.y - 3.05)
+    if (amount <= 0) return
+    entity.health -= amount
+    entity.hurtTime = 0.5
+    if (entity.health <= 0) {
+      entity.health = 0
+      entity.deathTime = Number.EPSILON
+      this.hooks.sound(entity.kind, 'death')
+    } else {
+      this.hooks.sound(entity.kind, 'hurt')
+    }
   }
 
   private moveAxis(entity: EntityState, axis: 'x' | 'y' | 'z', amount: number, canStep = false): void {
@@ -1001,7 +1096,7 @@ export class EntityManager {
       if (!spawned) continue
       const entity = this.entities.get(spawned.id)!
       entity.vx = clamp(finite(raw.vx), -20, 20); entity.vy = clamp(finite(raw.vy), -20, 20); entity.vz = clamp(finite(raw.vz), -20, 20)
-      entity.yaw = finite(raw.yaw); entity.health = clamp(finite(raw.health, def.maxHealth), 1, def.maxHealth)
+      entity.yaw = finite(raw.yaw); entity.health = clamp(finite(raw.health, entity.maxHealth), 1, entity.maxHealth)
       entity.age = clamp(finite(raw.age), -1200, 0); entity.breedCooldown = clamp(finite(raw.breedCooldown), 0, 300)
       entity.eggTimer = raw.kind === 'chicken' ? clamp(finite(raw.eggTimer, 300), 1, 600) : 0
       entity.attackCooldown = clamp(finite(raw.attackCooldown ?? 0), 0, 10)

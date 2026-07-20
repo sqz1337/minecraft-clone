@@ -279,7 +279,7 @@ function parseSave(value: unknown, seed: string): WorldSaveData | null {
       saturation: isFiniteNumber(player.saturation)
         ? Math.max(0, Math.min(20, player.saturation))
         : 5,
-      air: isFiniteNumber(player.air) ? Math.max(0, Math.min(10, player.air)) : 10,
+      air: isFiniteNumber(player.air) ? Math.max(0, Math.min(15, player.air)) : 15,
       exhaustion: isFiniteNumber(player.exhaustion) ? Math.max(0, player.exhaustion) : 0,
       experience: isFiniteNumber(player.experience) ? Math.max(0, Math.min(10_000_000, Math.floor(player.experience))) : 0,
       ...(isFiniteNumber(player.respawnX) && isFiniteNumber(player.respawnY) && isFiniteNumber(player.respawnZ)

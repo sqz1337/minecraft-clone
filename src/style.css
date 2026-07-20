@@ -564,6 +564,38 @@ select option { background: #0d1420; }
 .admin-title { margin: 1px 0 5px 1px; }
 .admin-grid { grid-template-columns: repeat(9, 18px); }
 .admin-hint { margin: 5px 0 0 1px; }
+/* Villager trading (no classic 1.2.4 art exists — imitates the window chrome) */
+.trade-window {
+  position: relative;
+  width: 176px; height: 182px;
+  transform: scale(var(--mc-scale));
+  transform-origin: center;
+}
+.trade-title { position: absolute; left: 8px; top: 6px; }
+.trade-offers {
+  position: absolute;
+  left: 7px; top: 18px;
+  width: 162px;
+  display: grid;
+  gap: 2px;
+}
+.trade-offer {
+  height: 20px;
+  border: 0;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  background: rgba(139, 139, 139, 0.55);
+  cursor: pointer;
+  image-rendering: pixelated;
+}
+.trade-offer:hover:not(.unavailable) { background: rgba(255, 255, 255, 0.4); }
+.trade-offer.unavailable { filter: grayscale(0.7); opacity: 0.6; cursor: default; }
+.trade-inventory-title { position: absolute; left: 8px; top: 87px; }
+.trade-main { top: 98px; grid-template-rows: repeat(3, 18px); }
+.trade-hotbar { top: 157px; }
 .inventory-title, .inventory-crafting-title, .workbench-title { position: absolute; }
 .inventory-title { display: none; }
 .inventory-crafting-title { left: 86px; top: 16px; }

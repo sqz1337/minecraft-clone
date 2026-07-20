@@ -212,8 +212,9 @@ export function fortuneDropCount(base: number, level: number, random = Math.rand
   return base * (bonus + 1)
 }
 
+/** Classic 1.0–1.8 Sharpness: +1.25 damage per level (the 0.5+0.5·lvl curve is 1.9+). */
 export function sharpnessBonus(level: number): number {
-  return level > 0 ? 0.5 + level * 0.5 : 0
+  return level > 0 ? level * 1.25 : 0
 }
 
 export function powerBowBonus(level: number): number {
@@ -221,5 +222,5 @@ export function powerBowBonus(level: number): number {
 }
 
 export function protectionReduction(levels: number): number {
-  return Math.min(0.32, Math.max(0, levels) * 0.04)
+  return Math.min(0.8, Math.max(0, levels) * 0.04)
 }

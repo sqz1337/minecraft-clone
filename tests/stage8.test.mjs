@@ -78,7 +78,9 @@ test('melee criticals, armor, bow charge and explosion falloff are deterministic
   assert.deepEqual(bowPullSprite(0.4), [7, 1])
   assert.deepEqual(bowPullSprite(1), [8, 1])
   assert.ok(explosionDamage(0, 4) > explosionDamage(3, 4))
-  assert.equal(explosionDamage(4, 4), 0)
+  // vanilla range is 2×power blocks
+  assert.ok(explosionDamage(6, 4) > 0)
+  assert.equal(explosionDamage(8, 4), 0)
 })
 
 test('hostile spawn rules enforce real light, distance, biome and mob cap', () => {
@@ -112,7 +114,7 @@ test('hostiles share caps, melee/ranged AI, sunlight and creeper explosions', ()
   })
   manager.spawn('zombie', 0.8, 1, 0)
   manager.update(0.05, { player: { x: 0, y: 1, z: 0 }, heldItem: null, skyDarkness: 15 })
-  assert.equal(hits[0].amount, 4)
+  assert.equal(hits[0].amount, 3)
 
   manager.spawn('skeleton', 8, 1, 0)
   manager.update(0.05, { player: { x: 0, y: 1, z: 0 }, heldItem: null, skyDarkness: 15 })

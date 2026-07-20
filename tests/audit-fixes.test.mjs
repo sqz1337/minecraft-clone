@@ -54,7 +54,8 @@ test('shears craft correctly and sheep shearing survives serialization', () => {
   const restored = new EntityManager(flatWorld())
   restored.restore(saved)
   assert.equal(restored.snapshots[0].sheared, true)
-  assert.ok(saved[0].woolTimer >= 120)
+  // wool now regrows by eating grass; the timer is only the next eat attempt delay
+  assert.ok(saved[0].woolTimer > 0)
 })
 
 test('animal behavior, classic drops and food side effects match the corrected rules', () => {

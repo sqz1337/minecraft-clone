@@ -26,12 +26,13 @@ export type SerializedBlockFacings = Record<string, number[]>
 /** Scheduled block updates encoded as x/y/z/remaining-ticks/kind tuples. */
 export type SerializedScheduledTicks = number[]
 
+/** Tick kinds: 0 validation, 1 sapling, 2 fluid, 3 fire, 4 TNT fuse, 5 falling block. */
 interface ScheduledBlockTick {
   x: number
   y: number
   z: number
   due: number
-  kind: 0 | 1 | 2 | 3 | 4
+  kind: 0 | 1 | 2 | 3 | 4 | 5
 }
 
 const SIMULATION_STEP = 1 / 20
@@ -285,11 +286,29 @@ export class World {
     }
   }
 
-  /** Replaces a placed TNT block with its persistent, scheduled fuse state. */
-  primeTnt(x: number, y: number, z: number, fuseTicks = 80): boolean {
+  /**
+   * Replaces a placed TNT block with its persistent, scheduled fuse state.
+   * `scattered` is a crude stand-in for vanilla's primed-TNT entity being thrown
+   * by a neighboring blast: the charge may hop into a random free cell nearby.
+   */
+  primeTnt(x: number, y: number, z: number, fuseTicks = 80, scattered = false): boolean {
     const id = this.getBlock(x, y, z)
     if (id !== B.TNT && id !== B.PRIMED_TNT) return false
     if (id === B.TNT) this.setBlock(x, y, z, B.PRIMED_TNT)
+    if (scattered) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const dx = Math.floor(Math.random() * 3) - 1
+        const dy = Math.floor(Math.random() * 2)
+        const dz = Math.floor(Math.random() * 3) - 1
+        if (dx === 0 && dy === 0 && dz === 0) continue
+        const tx = x + dx, ty = y + dy, tz = z + dz
+        if (this.getBlock(tx, ty, tz) !== B.AIR) continue
+        this.setBlock(x, y, z, B.AIR)
+        this.setBlock(tx, ty, tz, B.PRIMED_TNT)
+        x = tx; y = ty; z = tz
+        break
+      }
+    }
     this.scheduleBlockTick(x, y, z, Math.max(2, fuseTicks), 4)
     this.onTntPrimed(x, y, z)
     return true
@@ -688,7 +707,7 @@ export class World {
     for (const chunk of rippled) this.remeshChunk(chunk)
   }
 
-  private scheduleBlockTick(x: number, y: number, z: number, delay: number, kind: 0 | 1 | 2 | 3 | 4 = 0): void {
+  private scheduleBlockTick(x: number, y: number, z: number, delay: number, kind: 0 | 1 | 2 | 3 | 4 | 5 = 0): void {
     if (y < 1 || y >= WORLD_HEIGHT) return
     const due = this.simulationTick + Math.max(1, Math.floor(delay))
     if (!this.scheduledTickIndex) {
@@ -701,8 +720,15 @@ export class World {
       return
     }
     if (this.scheduledTicks.length >= 8192) {
-      const removed = this.scheduledTicks.shift()!
-      this.scheduledTickIndex.delete(this.scheduledTickKey(removed.x, removed.y, removed.z, removed.kind))
+      // Only low-priority ticks may be dropped on overflow: evicting a TNT fuse
+      // (kind 4) or a fluid tick (kind 2) would freeze the block forever.
+      let evictable = this.scheduledTicks.findIndex(tick => tick.kind === 0)
+      if (evictable === -1) evictable = this.scheduledTicks.findIndex(tick => tick.kind === 1 || tick.kind === 3)
+      if (evictable !== -1) {
+        const removed = this.scheduledTicks.splice(evictable, 1)[0]
+        this.scheduledTickIndex.delete(this.scheduledTickKey(removed.x, removed.y, removed.z, removed.kind))
+      }
+      // if only critical ticks remain, the queue is allowed to exceed the soft cap
     }
     const tick = { x, y, z, due, kind }
     this.scheduledTicks.push(tick)
@@ -753,6 +779,8 @@ export class World {
             this.setBlock(tick.x, tick.y, tick.z, B.AIR)
             this.onTntExplode(tick.x + 0.5, tick.y + 0.5, tick.z + 0.5, 4)
           }
+        } else if (tick.kind === 5) {
+          this.continueFallingBlock(tick.x, tick.y, tick.z)
         } else {
           this.validateFarmingBlock(tick.x, tick.y, tick.z)
         }
@@ -945,8 +973,7 @@ export class World {
       return
     }
     if (isLeafBlock(id)) {
-      const logId = id === B.PINELEAVES ? B.PINELOG : id === B.JUNGLE_LEAVES ? B.JUNGLE_LOG : B.LOG
-      if (roll % 5 === 0 && !this.hasNearbyLog(x, y, z, logId)) {
+      if (roll % 5 === 0 && !this.hasNearbyLog(x, y, z)) {
         this.setBlock(x, y, z, B.AIR)
         this.onAutomaticBlockBreak(x, y, z, id)
       }
@@ -1011,9 +1038,11 @@ export class World {
     return false
   }
 
-  private hasNearbyLog(x: number, y: number, z: number, logId: number): boolean {
+  /** Any log kind sustains leaves, like vanilla — the tree species does not matter. */
+  private hasNearbyLog(x: number, y: number, z: number): boolean {
     for (let dx = -4; dx <= 4; dx++) for (let dy = -4; dy <= 4; dy++) for (let dz = -4; dz <= 4; dz++) {
-      if (this.getBlock(x + dx, y + dy, z + dz) === logId) return true
+      const id = this.getBlock(x + dx, y + dy, z + dz)
+      if (id === B.LOG || id === B.PINELOG || id === B.JUNGLE_LOG) return true
     }
     return false
   }
@@ -1191,8 +1220,8 @@ export class World {
       const delay = serialized[i + 3], kind = serialized[i + 4]
       if (![x, y, z, delay, kind].every(Number.isInteger) || Math.abs(x) > 30_000_000 ||
         Math.abs(z) > 30_000_000 || y < 1 || y >= WORLD_HEIGHT || delay < 1 ||
-        (kind !== 0 && kind !== 1 && kind !== 2 && kind !== 3 && kind !== 4)) continue
-      const tick = { x, y, z, due: delay, kind: kind as 0 | 1 | 2 | 3 | 4 }
+        (kind !== 0 && kind !== 1 && kind !== 2 && kind !== 3 && kind !== 4 && kind !== 5)) continue
+      const tick = { x, y, z, due: delay, kind: kind as 0 | 1 | 2 | 3 | 4 | 5 }
       const key = this.scheduledTickKey(x, y, z, tick.kind)
       const existing = this.scheduledTickIndex.get(key)
       if (existing) existing.due = Math.min(existing.due, delay)
@@ -1240,25 +1269,40 @@ export class World {
     this.editsDirty = true
   }
 
+  /**
+   * Moves each gravity block of the column down ONE cell and schedules the next
+   * step, so sand/gravel visibly fall block-by-block (20 blocks/s) instead of
+   * teleporting straight to the bottom of the column.
+   */
   private settleFallingColumn(chunk: Chunk, lx: number, startY: number, lz: number): void {
     const replaceable = (id: number) => id === B.AIR || isFluid(id) || CROSS[id]
     let sourceY = startY
     while (sourceY < WORLD_HEIGHT && replaceable(chunk.get(lx, sourceY, lz))) sourceY++
 
+    const wx = chunk.cx * CHUNK_SIZE + lx, wz = chunk.cz * CHUNK_SIZE + lz
     while (sourceY < WORLD_HEIGHT) {
       const id = chunk.get(lx, sourceY, lz)
       if (!GRAVITY[id]) break
-
-      let targetY = sourceY
-      while (targetY > 1 && replaceable(chunk.get(lx, targetY - 1, lz))) targetY--
-      if (targetY === sourceY) break
+      if (sourceY <= 1 || !replaceable(chunk.get(lx, sourceY - 1, lz))) break
 
       chunk.set(lx, sourceY, lz, B.AIR)
       this.recordBlockEdit(chunk, Chunk.index(lx, sourceY, lz), B.AIR)
-      chunk.set(lx, targetY, lz, id)
-      this.recordBlockEdit(chunk, Chunk.index(lx, targetY, lz), id)
+      chunk.set(lx, sourceY - 1, lz, id)
+      this.recordBlockEdit(chunk, Chunk.index(lx, sourceY - 1, lz), id)
+      this.scheduleBlockTick(wx, sourceY - 1, wz, 1, 5)
       sourceY++
     }
+  }
+
+  /** Scheduled continuation of a falling sand/gravel block: drops one more cell per simulation tick. */
+  private continueFallingBlock(x: number, y: number, z: number): void {
+    if (!GRAVITY[this.getBlock(x, y, z)]) return
+    const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
+    const chunk = this.chunkAt(cx, cz)
+    if (!chunk || chunk.state < ChunkState.GENERATED) return
+    const lx = x - cx * CHUNK_SIZE, lz = z - cz * CHUNK_SIZE
+    this.settleFallingColumn(chunk, lx, y, lz)
+    this.refreshChangedBlock(chunk, lx, lz)
   }
 
   remeshChunk(chunk: Chunk): void {

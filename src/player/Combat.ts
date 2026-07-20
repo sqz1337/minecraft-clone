@@ -1,6 +1,7 @@
 import { ITEMS, type ArmorSlot } from '../world/Items'
 
-export const MELEE_REACH = 4.5
+/** Vanilla entity attack reach is ~3 blocks (block reach stays 4.5). */
+export const MELEE_REACH = 3
 export const ATTACK_COOLDOWN = 0.5
 export const MAX_ARMOR_POINTS = 20
 export const ARMOR_SLOTS: readonly ArmorSlot[] = ['head', 'chest', 'legs', 'feet']
@@ -19,7 +20,8 @@ export function damageAfterArmor(amount: number, armorPoints: number, protection
   if (!Number.isFinite(amount) || amount <= 0) return 0
   const points = Math.max(0, Math.min(MAX_ARMOR_POINTS, armorPoints))
   const armorReduced = amount * (1 - points / 25)
-  const enchantmentReduction = Math.min(0.32, Math.max(0, protectionLevels) * 0.04)
+  // vanilla EPF cap: 20 levels × 4% = 80%
+  const enchantmentReduction = Math.min(0.8, Math.max(0, protectionLevels) * 0.04)
   const reduced = armorReduced * (1 - enchantmentReduction)
   return Math.max(0, enchantmentReduction > 0 ? Math.floor(reduced) : Math.ceil(reduced))
 }
@@ -48,9 +50,13 @@ export function bowPullSprite(chargeSeconds: number | null): readonly [column: n
   return [8, 1]
 }
 
-/** Radial explosion damage with linear falloff; exposure is reserved for ray visibility. */
-export function explosionDamage(distance: number, radius: number, exposure = 1): number {
-  if (radius <= 0 || distance >= radius || exposure <= 0) return 0
-  const impact = (1 - Math.max(0, distance) / radius) * Math.min(1, exposure)
-  return Math.max(0, Math.floor((impact * impact + impact) * 7 * radius / 2 + 1))
+/**
+ * Vanilla explosion damage: reaches 2×power blocks, `impact = (1 − dist/(2·power))·exposure`,
+ * `damage = 7·power·(impact² + impact) + 1` (TNT power 4 ≈ 30 max, creeper 3 ≈ 22).
+ */
+export function explosionDamage(distance: number, power: number, exposure = 1): number {
+  const range = 2 * power
+  if (power <= 0 || distance >= range || exposure <= 0) return 0
+  const impact = (1 - Math.max(0, distance) / range) * Math.min(1, exposure)
+  return Math.max(0, Math.floor((impact * impact + impact) * 7 * power + 1))
 }

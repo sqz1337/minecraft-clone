@@ -89,6 +89,8 @@ export const I = {
   CLOCK: 347,
   BED: 355,
   MAP: 358,
+  /** Emeralds arrived with 1.3 trading; included to back the villager trade feature. */
+  EMERALD: 388,
   /** Realmcraft extension: mutton is not part of classic 1.2.4. */
   RAW_MUTTON: 400,
   COOKED_MUTTON: 401

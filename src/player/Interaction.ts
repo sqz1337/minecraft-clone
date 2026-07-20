@@ -72,6 +72,8 @@ export class Interaction {
   onBlockBroken: (x: number, y: number, z: number, id: number) => void = () => {}
   /** Spawns recoverable XP at a gameplay source such as an ore. */
   onExperience: (x: number, y: number, z: number, amount: number) => void = () => {}
+  /** Fired when the player right-clicks a villager to trade. */
+  onUseVillager: (entityId: string) => void = () => {}
 
   private rayDir = new THREE.Vector3()
   private rayOrigin = new THREE.Vector3()
@@ -759,6 +761,12 @@ export class Interaction {
         if (item && this.entities.feed(entityHit!.entity.id, item.id)) {
           if (this.mode === 'survival') this.inventory.remove(this.selected, 1)
           this.swing()
+          this.placing = false
+          this.placeCooldown = 0.3
+          return
+        }
+        if (entityHit!.entity.kind === 'villager' && this.mode === 'survival') {
+          this.onUseVillager(entityHit!.entity.id)
           this.placing = false
           this.placeCooldown = 0.3
           return

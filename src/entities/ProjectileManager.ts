@@ -17,11 +17,14 @@ interface ProjectileState extends ProjectileSnapshot {
   mesh: THREE.Mesh | null
   knockback: number
   fireSeconds: number
+  /** Entity id of the shooting mob so its own arrows never hit it. */
+  shooterId: string | null
 }
 
 export interface ShootOptions {
   knockback?: number
   fireSeconds?: number
+  shooterId?: string
 }
 
 export interface ProjectilePlayer {
@@ -84,18 +87,19 @@ export class ProjectileManager {
       vx: dir.x * speed, vy: dir.y * speed, vz: dir.z * speed,
       damage: Math.max(1, damage), stuck: false, life: 0, mesh,
       knockback: options.knockback ?? 2.8,
-      fireSeconds: options.fireSeconds ?? 0
+      fireSeconds: options.fireSeconds ?? 0,
+      shooterId: options.shooterId ?? null
     }
     this.projectiles.push(state)
     return state.id
   }
 
-  shootAt(x: number, y: number, z: number, tx: number, ty: number, tz: number, damage: number): number {
+  shootAt(x: number, y: number, z: number, tx: number, ty: number, tz: number, damage: number, shooterId?: string): number {
     const origin = new THREE.Vector3(x, y, z)
     const direction = new THREE.Vector3(tx - x, ty - y, tz - z)
     const horizontal = Math.hypot(direction.x, direction.z)
     direction.y += horizontal * 0.05
-    return this.shoot(origin, direction, 24, damage, 'mob')
+    return this.shoot(origin, direction, 24, damage, 'mob', { shooterId })
   }
 
   update(dt: number, player: ProjectilePlayer): void {
@@ -121,20 +125,26 @@ export class ProjectileManager {
     const nx = ox + projectile.vx * dt, ny = oy + projectile.vy * dt, nz = oz + projectile.vz * dt
     const dx = nx - ox, dy = ny - oy, dz = nz - oz
     const distance = Math.hypot(dx, dy, dz)
-    if (projectile.owner === 'player' && distance > 0) {
+    if (projectile.owner === 'mob' && this.segmentHitsPlayer(ox, oy, oz, nx, ny, nz, player)) {
+      this.hooks.damagePlayer(projectile.damage, ox, oz, 3.2)
+      this.remove(projectile)
+      return
+    }
+    // stray mob arrows also hit other mobs (classic skeleton-zombie infighting)
+    if (distance > 0) {
       const hit = this.entities.raycast(
-        new THREE.Vector3(ox, oy, oz), new THREE.Vector3(dx, dy, dz).normalize(), distance + 0.02
+        new THREE.Vector3(ox, oy, oz), new THREE.Vector3(dx, dy, dz).normalize(), distance + 0.02,
+        projectile.shooterId ?? undefined
       )
       if (hit) {
-        this.entities.damage(hit.entity.id, projectile.damage, ox, oz, projectile.knockback)
+        this.entities.damage(
+          hit.entity.id, projectile.damage, ox, oz, projectile.knockback, 0,
+          projectile.shooterId ?? undefined
+        )
         if (projectile.fireSeconds > 0) this.entities.ignite(hit.entity.id, projectile.fireSeconds)
         this.remove(projectile)
         return
       }
-    } else if (projectile.owner === 'mob' && this.segmentHitsPlayer(ox, oy, oz, nx, ny, nz, player)) {
-      this.hooks.damagePlayer(projectile.damage, ox, oz, 3.2)
-      this.remove(projectile)
-      return
     }
     projectile.x = nx; projectile.y = ny; projectile.z = nz
     if (this.world.isSolid(Math.floor(nx), Math.floor(ny), Math.floor(nz))) {

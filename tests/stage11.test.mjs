@@ -14,6 +14,7 @@ const bundle = buildSync({
       "export { rollLoot } from './src/world/Loot.ts'",
       "export { EntityManager, hostileSpawnAllowed } from './src/entities/EntityManager.ts'",
       "export { VILLAGER_PROFESSIONS } from './src/entities/EntityTypes.ts'",
+      "export { VILLAGER_TRADES } from './src/entities/Trades.ts'",
       "export { WorldSaveStore } from './src/core/WorldSave.ts'"
     ].join(';'),
     resolveDir: process.cwd(), sourcefile: 'stage11-test-entry.ts', loader: 'ts'
@@ -29,7 +30,7 @@ new Function('require', 'module', 'exports', bundle.outputFiles[0].text)(
 
 const {
   WorldGen, BIOME, Chunk, B, I, ITEMS, matchRecipe, rollLoot,
-  EntityManager, hostileSpawnAllowed, VILLAGER_PROFESSIONS, WorldSaveStore
+  EntityManager, hostileSpawnAllowed, VILLAGER_PROFESSIONS, VILLAGER_TRADES, WorldSaveStore
 } = bundledModule.exports
 
 function flatWorld(biome = BIOME.PLAINS) {
@@ -42,6 +43,23 @@ function flatWorld(biome = BIOME.PLAINS) {
     getLightLevel() { return 15 }
   }
 }
+
+test('every villager profession offers valid, affordable-by-stack trades', () => {
+  assert.equal(ITEMS[I.EMERALD].name, 'Emerald')
+  for (const profession of VILLAGER_PROFESSIONS) {
+    const trades = VILLAGER_TRADES[profession]
+    assert.ok(trades.length >= 2 && trades.length <= 3, `${profession} trade count`)
+    for (const trade of trades) {
+      for (const part of [trade.cost, trade.result]) {
+        const item = ITEMS[part.id]
+        assert.ok(item, `${profession}: unknown item id ${part.id}`)
+        assert.ok(part.count >= 1 && part.count <= item.stackSize * 2, `${profession}: bad count for ${item.name}`)
+      }
+    }
+    // every profession touches the emerald economy on both sides or at least one
+    assert.ok(trades.some(trade => trade.cost.id === I.EMERALD || trade.result.id === I.EMERALD))
+  }
+})
 
 test('stage 11 registers navigation, beds and structure blocks with recipes', () => {
   assert.equal(ITEMS[I.COMPASS].name, 'Compass')

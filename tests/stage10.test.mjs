@@ -60,8 +60,12 @@ test('experience levels, spending and full death loss are internally consistent'
   })
   assert.equal(spendExperienceLevels(total, 4), experienceForLevel(8) + 5)
   assert.equal(spendExperienceLevels(total, 13), null)
+  // vanilla drop: 7 × current level, capped at 100 and at the actual XP held
   const death = experienceAfterDeath(250)
-  assert.deepEqual(death, { retained: 0, dropped: 100 })
+  assert.deepEqual(death, { retained: 0, dropped: 7 * levelForExperience(250) })
+  assert.deepEqual(experienceAfterDeath(10_000), { retained: 0, dropped: 100 })
+  // below level 1 nothing drops (7 × level 0)
+  assert.deepEqual(experienceAfterDeath(5), { retained: 0, dropped: 0 })
 })
 
 test('classic offers are deterministic, priced by bookshelf power and applicable once', () => {
@@ -84,7 +88,7 @@ test('enchantment effects feed mining, durability, combat, armor and bows', () =
   assert.equal(shouldConsumeDurability(3, () => 0.24), true)
   assert.equal(shouldConsumeDurability(3, () => 0.26), false)
   assert.equal(fortuneDropCount(1, 3, () => 0.99), 4)
-  assert.equal(sharpnessBonus(4), 2.5)
+  assert.equal(sharpnessBonus(4), 5)
   assert.ok(damageAfterArmor(10, 10, 4) < damageAfterArmor(10, 10, 0))
   assert.ok(bowDamage(1, 4) > bowDamage(1, 0))
 })
