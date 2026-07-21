@@ -475,3 +475,53 @@ Nether-мобы и boss/End mechanics в этот аудит не включал
     исправить spacing и portal-room spawner.
 14. Восстановить biome decorators, все руды 1.2.4, weighted vegetation и полные
     tree generators.
+
+
+Готово
+P0.1 — выбор цели учитывает дальность, LOS и допустимый тип цели.
+
+P0.2 — добавлена память цели примерно на 60 тиков и движение к последней видимой позиции.
+
+P0.3 — Enderman требует пять проверок взгляда, LOS и учитывает тыкву.
+
+P0.4 — единая проверка полного AABB при natural spawn, spawner, загрузке, размножении и разделении slime.
+
+P1.5 — A* pathfinding с обходом стен, высотой сущности, шагами, падением, водой, лавой, дверями и stuck detection.
+
+P1.6 — разделены выбор цели, продолжение преследования, навигация и атака.
+
+P1.7 — eligible chunks, масштабируемые caps, weighted biome lists, pack spawning, despawn и отдельное правило slime chunks.
+
+P2.8 — исправлены Zombie, Skeleton, Spider, Slime и Enderman; добавлены двери и Silverfish.
+
+P2.9 — passive task scheduler: swim, panic, mating, temptation, follow parent, wander, watch/idle; трава для овец и flutter/яйца кур.
+
+P2.10 — граф деревень и дверей, дневное/ночное поведение жителей, избегание зомби, возвращение домой и размножение.
+
+P3.11 — новый похожий на 1.2.4 terrain/biome pipeline без требования точной seed compatibility.
+
+P3.12 — межчанковые caves, ravines, water/lava lakes.
+
+P3.13 — recursive villages, mineshafts, strongholds и dungeons с bounding boxes и spawner metadata.
+
+P3.14 — полный набор руд, decorators, растительность и генераторы деревьев.
+
+Дополнительно уже сделано:
+седло, езда на свинье и сохранение saddled;
+доение коров и mooshroom;
+mushroom stew из mooshroom;
+превращение mooshroom в корову ножницами с пятью красными грибами;
+все 16 блоков шерсти и рецепты с шерстью разных цветов;
+предметы saddle, fish, milk bucket, ink sac и snowball;
+Silverfish: AI, блоки, помощь стаи, hiding, stronghold spawner и модель;
+точные руды, растения, лианы, кактусы, кувшинки, берёзы и связанные collision/drop rules.
+Осталось
+Цвет как состояние самой овцы: естественное распределение, наследование, сохранение, цветная стрижка и предсмертный дроп. Сейчас овца всё ещё выдаёт raw mutton, которого в 1.2.4 не было.
+Категории water и ambient с caps 5/15.
+Squid: водный spawn, плавание, удушье на суше, ink sac и модель.
+Wolf: приручение костью, owner/sit/angry, стая, follow/teleport/attack и spawn.
+Ocelot и cat-варианты: jungle spawn, flee/stalk, приручение рыбой, sit/follow и отпугивание creeper.
+Cave Spider: яд, отдельная текстура, mineshaft spawner и cobweb.
+Charged Creeper от молнии и удвоенная сила взрыва; окончательная доводка fuse continuation.
+Более точное горение Zombie/Skeleton на солнце: случайная проверка яркости и защита головным предметом.
+Iron Golem и Snow Golem: создание, AI, модели и защита деревни.
