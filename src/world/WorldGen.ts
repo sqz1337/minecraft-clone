@@ -723,6 +723,11 @@ export class WorldGen implements CarverBaseSampler {
     return this.structureIndex.plansForChunk(cx, cz)
   }
 
+  /** Accept structure metadata already computed by a background generator. */
+  primeStructurePlans(cx: number, cz: number, plans: readonly StructurePlan[]): void {
+    this.structureIndex.primePlansForChunk(cx, cz, plans)
+  }
+
   structureChestsIn(cx: number, cz: number): StructureChest[] {
     return this.structureIndex.structureChestsIn(cx, cz)
   }

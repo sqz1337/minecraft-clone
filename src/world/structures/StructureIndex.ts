@@ -156,6 +156,15 @@ export class StructureIndex {
     return remember(this.destinationCache, destinationKey, ordered, DESTINATION_CACHE_LIMIT)
   }
 
+  /**
+   * Imports a destination result produced by the world-generation worker.
+   * Structure plans contain data only, so sharing them avoids repeating raw
+   * terrain validation on the render thread without changing world output.
+   */
+  primePlansForChunk(cx: number, cz: number, plans: readonly StructurePlan[]): void {
+    remember(this.destinationCache, key(cx, cz), [...plans], DESTINATION_CACHE_LIMIT)
+  }
+
   stampChunk(chunk: Chunk): void {
     for (const plan of this.plansForChunk(chunk.cx, chunk.cz)) {
       if (plan.kind === 'dungeon') this.stampDungeon(chunk, plan)

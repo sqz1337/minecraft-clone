@@ -13,6 +13,8 @@ import { buildChunkGeoms } from './Mesher'
 import { planTree, type TreeGeneratorKind } from './BiomeDecorator'
 import type { Materials } from '../gfx/Materials'
 import type { Atlas } from '../gfx/Atlas'
+import type { StructurePlan } from './structures/Types'
+import type { WorldGenWorkerResponse } from './WorldGenWorkerProtocol'
 
 export interface RayHit {
   x: number; y: number; z: number
@@ -42,6 +44,8 @@ const RANDOM_TICK_INTERVAL = 20
 const MAX_TICKS_PER_FRAME = 5
 /** Natural spawning simulates the full inner eligible square even when it is not rendered. */
 const MOB_SIMULATION_RADIUS = 8
+/** One worker executes serially; a small look-ahead keeps it fed without a huge stale backlog. */
+const MAX_PENDING_GENERATION = 2
 
 const LIGHT_CELLS = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT
 const LIGHT_CHANGED = 1 << 4
@@ -106,6 +110,13 @@ export class World {
   /** Prevents one intentional two-half door mutation from deleting its partner. */
   private doorPairMutationDepth = 0
   private dirtyChunkKeys = new Set<number>()
+  private generationWorker: Worker | null = null
+  private nextGenerationId = 1
+  private pendingGeneration = new Map<number, {
+    key: number
+    resolve: () => void
+  }>()
+  private generationJobs = new Map<number, Promise<void>>()
 
   constructor(
     gen: WorldGen,
@@ -127,6 +138,23 @@ export class World {
     this.importBlockEdits(savedEdits)
     this.importBlockFacings(savedFacings)
     this.importScheduledTicks(savedScheduledTicks)
+    this.startGenerationWorker()
+  }
+
+  private startGenerationWorker(): void {
+    if (typeof Worker === 'undefined') return
+    try {
+      const worker = new Worker(new URL('./WorldGenWorker.ts', import.meta.url), { type: 'module' })
+      worker.onmessage = (event: MessageEvent<WorldGenWorkerResponse>) => this.handleGenerationResponse(event.data)
+      worker.onerror = (event) => {
+        console.error('World generation worker failed; falling back to the main thread.', event)
+        this.stopGenerationWorker(true)
+      }
+      worker.postMessage({ type: 'init', seed: this.gen.seedStr, version: this.gen.generatorVersion })
+      this.generationWorker = worker
+    } catch (error) {
+      console.warn('Web Worker world generation is unavailable; using synchronous generation.', error)
+    }
   }
 
   /** String key used only for the persisted edit/facing maps (save format). */
@@ -656,7 +684,7 @@ export class World {
 
     for (const [cx, cz] of genList) {
       const c = this.ensureChunk(cx, cz)
-      if (c.state < ChunkState.GENERATED) this.generateChunk(c)
+      if (c.state < ChunkState.GENERATED) await this.generateChunkAsync(c)
       done++
       await maybeYield()
     }
@@ -691,14 +719,12 @@ export class World {
       const genC = this.genQueue.pop()
       if (genC) {
         if (genC.state < ChunkState.GENERATED) {
-          this.generateChunk(genC)
-          // freshly generated terrain may change light in already-meshed neighbors
-          for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-            const neighbor = this.chunkAt(genC.cx + dx, genC.cz + dz)
-            if (neighbor && neighbor.state === ChunkState.MESHED && this.rebuildChunkLighting(neighbor)) {
-              this.remeshChunk(neighbor)
-            }
+          if (this.generationJobs?.has(World.ck(genC.cx, genC.cz))) continue
+          if (this.generationWorker && this.pendingGeneration.size >= MAX_PENDING_GENERATION) {
+            this.genQueue.push(genC)
+            break
           }
+          void this.generateChunkAsync(genC)
         }
         continue
       }
@@ -736,7 +762,7 @@ export class World {
       for (let dx = -generationRadius; dx <= generationRadius; dx++) {
         const c = this.ensureChunk(ccx + dx, ccz + dz)
         const ring = Math.max(Math.abs(dx), Math.abs(dz))
-        if (c.state < ChunkState.GENERATED) this.genQueue.push(c)
+        if (c.state < ChunkState.GENERATED && !this.generationJobs?.has(World.ck(c.cx, c.cz))) this.genQueue.push(c)
         if (ring <= r && c.state < ChunkState.MESHED) this.meshQueue.push(c)
       }
     }
@@ -1329,13 +1355,87 @@ export class World {
 
   private generateChunk(chunk: Chunk): void {
     this.gen.fillChunk(chunk)
+    this.finishGeneratedChunk(chunk)
+  }
+
+  private finishGeneratedChunk(chunk: Chunk, structurePlans?: readonly StructurePlan[]): void {
+    if (structurePlans) this.gen.primeStructurePlans(chunk.cx, chunk.cz, structurePlans)
     const edits = this.blockEdits.get(this.key(chunk.cx, chunk.cz))
     if (edits) {
       for (const [index, id] of edits) chunk.blocks[index] = id
     }
+    chunk.state = ChunkState.GENERATED
     this.rebuildRandomTickIndex(chunk)
     this.rebuildChunkLighting(chunk)
     this.onChunkGenerated(chunk.cx, chunk.cz)
+
+    // Border lighting can change when a missing neighbor arrives. Defer the
+    // expensive remesh to the normal queue instead of doing it in this event.
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const neighbor = this.chunkAt(chunk.cx + dx, chunk.cz + dz)
+      if (!neighbor || neighbor.state !== ChunkState.MESHED) continue
+      if (!this.rebuildChunkLighting(neighbor)) continue
+      neighbor.state = ChunkState.GENERATED
+      if (!this.meshQueue.includes(neighbor)) this.meshQueue.push(neighbor)
+    }
+  }
+
+  private generateChunkAsync(chunk: Chunk): Promise<void> {
+    if (chunk.state >= ChunkState.GENERATED) return Promise.resolve()
+    const key = World.ck(chunk.cx, chunk.cz)
+    const existing = this.generationJobs.get(key)
+    if (existing) return existing
+
+    if (!this.generationWorker) {
+      this.generateChunk(chunk)
+      return Promise.resolve()
+    }
+
+    const id = this.nextGenerationId++
+    const job = new Promise<void>((resolve) => {
+      this.pendingGeneration.set(id, { key, resolve })
+      this.generationWorker!.postMessage({ type: 'generate', id, cx: chunk.cx, cz: chunk.cz })
+    })
+    this.generationJobs.set(key, job)
+    return job
+  }
+
+  private handleGenerationResponse(response: WorldGenWorkerResponse): void {
+    const pending = this.pendingGeneration.get(response.id)
+    if (!pending) return
+    this.pendingGeneration.delete(response.id)
+    this.generationJobs.delete(pending.key)
+
+    const chunk = this.chunks.get(pending.key)
+    if (response.type === 'generated' && chunk) {
+      chunk.blocks = new Uint8Array(response.blocks)
+      chunk.colBiome = new Uint8Array(response.colBiome)
+      chunk.colHeight = new Uint8Array(response.colHeight)
+      this.finishGeneratedChunk(chunk, response.structurePlans)
+    } else if (response.type === 'error' && chunk) {
+      console.error(`Worker failed to generate chunk ${response.cx},${response.cz}: ${response.message}`)
+      this.generateChunk(chunk)
+    }
+    pending.resolve()
+  }
+
+  private stopGenerationWorker(fallbackPending: boolean): void {
+    this.generationWorker?.terminate()
+    this.generationWorker = null
+    if (!fallbackPending) {
+      this.pendingGeneration.clear()
+      this.generationJobs.clear()
+      return
+    }
+
+    const pendingJobs = [...this.pendingGeneration.values()]
+    this.pendingGeneration.clear()
+    for (const pending of pendingJobs) {
+      this.generationJobs.delete(pending.key)
+      const chunk = this.chunks.get(pending.key)
+      if (chunk && chunk.state < ChunkState.GENERATED) this.generateChunk(chunk)
+      pending.resolve()
+    }
   }
 
   private importBlockEdits(serialized: SerializedBlockEdits): void {
@@ -1554,6 +1654,7 @@ export class World {
   }
 
   dispose(): void {
+    this.stopGenerationWorker(false)
     for (const c of this.chunks.values()) this.disposeChunkMeshes(c)
     this.chunks.clear()
     this.cacheKey = NaN
