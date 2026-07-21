@@ -75,6 +75,12 @@ const MOB_SOUNDS: Record<MobKind, Record<MobEvent, readonly string[]>> = {
   enderman: {
     ambient: numberedPaths('mob/enderman/idle', 5), hurt: numberedPaths('mob/enderman/hit', 4),
     death: ['mob/enderman/death.ogg'], step: stepPaths('stone'), egg: [], fuse: []
+  },
+  silverfish: {
+    // This asset pack predates dedicated silverfish samples. Keep it quiet at
+    // rest and reuse the unobtrusive stone set for contact/death feedback.
+    ambient: [], hurt: stepPaths('stone'), death: stepPaths('stone'),
+    step: stepPaths('stone'), egg: [], fuse: []
   }
 }
 

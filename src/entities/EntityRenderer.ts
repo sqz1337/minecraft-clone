@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import type { EntitySnapshot, MobKind, VillagerProfession } from './EntityTypes'
 
 interface EntityView {
+  kind: MobKind | null
   group: THREE.Group
   legs: THREE.Object3D[]
   head: THREE.Object3D
@@ -12,6 +13,10 @@ interface EntityView {
   fromYaw: number
   targetYaw: number
   furParts: THREE.Object3D[]
+  saddleParts: THREE.Object3D[]
+  wings: THREE.Object3D[]
+  /** Ordered head-to-tail pieces used by the silverfish body wave. */
+  segments: THREE.Object3D[]
   carriedBlock: THREE.Mesh | null
   materials: THREE.MeshLambertMaterial[]
 }
@@ -40,6 +45,7 @@ export class EntityRenderer {
   private textures: THREE.Texture[] = []
   private materials = new Map<MobKind, THREE.MeshLambertMaterial>()
   private sheepFurMaterial: THREE.MeshLambertMaterial
+  private saddleMaterial: THREE.MeshLambertMaterial
   private eyeMaterials = new Map<'enderman' | 'spider', THREE.MeshBasicMaterial>()
   private carriedBlockMaterial = new THREE.MeshLambertMaterial({ color: 0x8b6a45 })
   private mushroomMaterial = new THREE.MeshLambertMaterial({ color: 0xb52b28 })
@@ -54,9 +60,11 @@ export class EntityRenderer {
     this.materials.set('villager', this.mobMaterial(loader, 'villager.png'))
     for (const [kind, file] of [
       ['zombie', 'zombie.png'], ['skeleton', 'skeleton.png'], ['spider', 'spider.png'],
-      ['creeper', 'creeper.png'], ['slime', 'slime.png'], ['enderman', 'enderman.png']
+      ['creeper', 'creeper.png'], ['slime', 'slime.png'], ['enderman', 'enderman.png'],
+      ['silverfish', 'silverfish.png']
     ] as const) this.materials.set(kind, this.mobMaterial(loader, file, kind === 'slime'))
     this.sheepFurMaterial = this.mobMaterial(loader, 'sheep_fur.png', true)
+    this.saddleMaterial = this.mobMaterial(loader, 'saddle.png', true)
     this.eyeMaterials.set('enderman', this.eyesMaterial(loader, 'enderman_eyes.png'))
     this.eyeMaterials.set('spider', this.eyesMaterial(loader, 'spider_eyes.png'))
     scene.add(this.group)
@@ -148,7 +156,7 @@ export class EntityRenderer {
 
   private view(group: THREE.Group, legs: THREE.Object3D[], head: THREE.Object3D): EntityView {
     return {
-      group, legs, head,
+      kind: null, group, legs, head,
       walkPhase: Math.random() * Math.PI * 2,
       fromPosition: new THREE.Vector3(),
       targetPosition: new THREE.Vector3(),
@@ -156,6 +164,9 @@ export class EntityRenderer {
       fromYaw: 0,
       targetYaw: 0,
       furParts: [],
+      saddleParts: [],
+      wings: [],
+      segments: [],
       carriedBlock: null,
       materials: []
     }
@@ -180,6 +191,7 @@ export class EntityRenderer {
     const group = new THREE.Group()
     const material = this.materials.get(kind)!
     const legs: THREE.Object3D[] = []
+    const saddleParts: THREE.Object3D[] = []
     const cow = kind === 'cow' || kind === 'mooshroom', sheep = kind === 'sheep'
     const bodyUv: BoxUv = cow
       ? { u: 18, v: 4, width: 12, height: 18, depth: 10 }
@@ -204,6 +216,13 @@ export class EntityRenderer {
     if (kind === 'pig') {
       this.box(head, [0.34, 0.25, 0.1], [0, -0.07, -0.38], material,
         { u: 16, v: 16, width: 4, height: 3, depth: 1 })
+      const saddleBody = this.box(group, [0.91, 1.41, 0.75], [0, 0.88, 0.08], this.saddleMaterial,
+        { u: 28, v: 8, width: 10, height: 16, depth: 8 }, -Math.PI / 2)
+      const saddleHead = this.box(group, [0.67, 0.67, 0.67], [0, 1.08, -0.72], this.saddleMaterial,
+        { u: 0, v: 0, width: 8, height: 8, depth: 8 })
+      const saddleSnout = this.box(saddleHead, [0.35, 0.26, 0.11], [0, -0.07, -0.38], this.saddleMaterial,
+        { u: 16, v: 16, width: 4, height: 3, depth: 1 })
+      saddleParts.push(saddleBody, saddleHead, saddleSnout)
     } else if (kind === 'cow') {
       this.box(head, [0.1, 0.28, 0.1], [-0.3, 0.34, -0.03], material,
         { u: 22, v: 0, width: 1, height: 3, depth: 1 })
@@ -237,6 +256,7 @@ export class EntityRenderer {
     }
     const view = this.view(group, legs, head)
     view.furParts = group.userData.furParts ?? []
+    view.saddleParts = saddleParts
     return view
   }
 
@@ -277,15 +297,19 @@ export class EntityRenderer {
       { u: 14, v: 0, width: 4, height: 2, depth: 2 })
     this.box(head, [0.16, 0.18, 0.14], [0, -0.18, -0.16], material,
       { u: 14, v: 4, width: 2, height: 2, depth: 2 })
-    this.box(model, [0.1, 0.38, 0.54], [-0.34, 0.83, 0.04], material,
-      { u: 24, v: 13, width: 1, height: 4, depth: 6 })
-    this.box(model, [0.1, 0.38, 0.54], [0.34, 0.83, 0.04], material,
-      { u: 24, v: 13, width: 1, height: 4, depth: 6 })
+    const wings = [
+      this.box(model, [0.1, 0.38, 0.54], [-0.34, 0.83, 0.04], material,
+        { u: 24, v: 13, width: 1, height: 4, depth: 6 }),
+      this.box(model, [0.1, 0.38, 0.54], [0.34, 0.83, 0.04], material,
+        { u: 24, v: 13, width: 1, height: 4, depth: 6 })
+    ]
     for (const x of [-0.16, 0.16]) {
       legs.push(this.box(model, [0.1, 0.42, 0.1], [x, 0.25, 0], material,
         { u: 26, v: 0, width: 3, height: 5, depth: 3 }))
     }
-    return this.view(group, legs, head)
+    const view = this.view(group, legs, head)
+    view.wings = wings
+    return view
   }
 
   private humanoid(kind: 'zombie' | 'skeleton' | 'enderman'): EntityView {
@@ -360,6 +384,60 @@ export class EntityRenderer {
     return this.view(group, [], head)
   }
 
+  /** Seven low cuboids reproduce the classic tapered, articulated silverfish. */
+  private silverfish(): EntityView {
+    const group = new THREE.Group(), material = this.materials.get('silverfish')!
+    const parts = [
+      { size: [3, 2, 2], uv: [0, 0] },
+      { size: [4, 3, 2], uv: [0, 4] },
+      { size: [6, 4, 3], uv: [0, 9] },
+      { size: [3, 3, 3], uv: [0, 16] },
+      { size: [2, 2, 3], uv: [0, 22] },
+      { size: [2, 1, 2], uv: [11, 0] },
+      { size: [1, 1, 2], uv: [13, 4] }
+    ] as const
+    const segments: THREE.Object3D[] = []
+    let zPixels = -3.5
+    for (let i = 0; i < parts.length; i++) {
+      const [width, height, depth] = parts[i].size
+      const [u, v] = parts[i].uv
+      const segment = this.box(
+        group,
+        [width / 16, height / 16, depth / 16],
+        [0, height / 32, zPixels / 16],
+        material,
+        { u, v, width, height, depth }
+      )
+      segment.castShadow = true
+      segment.userData.silverfishBaseX = segment.position.x
+      segments.push(segment)
+      const next = parts[i + 1]
+      if (next) zPixels += (depth + next.size[2]) * 0.5
+    }
+    // ModelSilverfish also has three thin dorsal plates attached to the broad
+    // middle segments. Parenting them keeps each plate in the same body wave.
+    for (const fin of [
+      { segment: 2, size: [10, 8, 1], uv: [20, 0] },
+      { segment: 3, size: [6, 4, 1], uv: [20, 11] },
+      { segment: 4, size: [6, 5, 1], uv: [20, 18] }
+    ] as const) {
+      const [width, height, depth] = fin.size
+      const [u, v] = fin.uv
+      const bodyHeight = parts[fin.segment].size[1]
+      const plate = this.box(
+        segments[fin.segment],
+        [width / 16, height / 16, depth / 16],
+        [0, (bodyHeight + height) / 32, 0],
+        material,
+        { u, v, width, height, depth }
+      )
+      plate.castShadow = true
+    }
+    const view = this.view(group, [], segments[0])
+    view.segments = segments
+    return view
+  }
+
   private build(kind: MobKind): EntityView {
     let view: EntityView
     if (kind === 'chicken') view = this.chicken()
@@ -368,7 +446,9 @@ export class EntityRenderer {
     else if (kind === 'zombie' || kind === 'skeleton' || kind === 'enderman') view = this.humanoid(kind)
     else if (kind === 'creeper') view = this.creeper()
     else if (kind === 'spider') view = this.spider()
-    else view = this.slime()
+    else if (kind === 'slime') view = this.slime()
+    else view = this.silverfish()
+    view.kind = kind
     this.isolateMaterials(view)
     this.group.add(view.group)
     return view
@@ -379,6 +459,12 @@ export class EntityRenderer {
     for (const entity of entities) {
       live.add(entity.id)
       let view = this.views.get(entity.id)
+      if (view && view.kind !== entity.kind) {
+        view.group.removeFromParent()
+        for (const material of view.materials) material.dispose()
+        this.views.delete(entity.id)
+        view = undefined
+      }
       if (!view) {
         view = this.build(entity.kind)
         this.views.set(entity.id, view)
@@ -428,6 +514,7 @@ export class EntityRenderer {
         material.emissiveIntensity = hurt ? 0.8 : 1
       }
       for (const fur of view.furParts) fur.visible = !entity.sheared
+      for (const saddle of view.saddleParts) saddle.visible = entity.saddled
       if (view.carriedBlock) {
         view.carriedBlock.visible = entity.carriedBlock !== null
         if (entity.carriedBlock !== null) {
@@ -444,7 +531,29 @@ export class EntityRenderer {
       view.walkPhase += dt * (3 + speed * 7)
       const swing = Math.sin(view.walkPhase) * Math.min(0.75, speed * 0.28)
       for (let i = 0; i < view.legs.length; i++) view.legs[i].rotation.x = i % 2 ? -swing : swing
-      view.head.rotation.x = Math.sin(view.walkPhase * 0.18) * 0.08
+      const relativeHeadYaw = Math.atan2(
+        Math.sin(entity.headYaw - entity.yaw), Math.cos(entity.headYaw - entity.yaw)
+      )
+      view.head.rotation.y = Math.max(-1.3, Math.min(1.3, relativeHeadYaw))
+      view.head.rotation.x = entity.headPitch + Math.sin(view.walkPhase * 0.18) * 0.08
+      if (view.wings.length === 2) {
+        const flap = 0.25 + Math.sin(entity.wingRotation) * 0.55
+        view.wings[0].rotation.z = -flap
+        view.wings[1].rotation.z = flap
+      }
+      if (view.segments.length > 0) {
+        const lookYaw = view.head.rotation.y
+        for (let i = 0; i < view.segments.length; i++) {
+          const segment = view.segments[i]
+          const distanceFromShoulders = Math.abs(i - 2)
+          const phase = view.walkPhase * 0.9 + i * Math.PI * 0.15
+          segment.rotation.x = 0
+          segment.rotation.y = Math.cos(phase) * 0.12 * (1 + distanceFromShoulders) +
+            (i === 0 ? lookYaw * 0.2 : 0)
+          segment.position.x = segment.userData.silverfishBaseX +
+            Math.sin(phase) * 0.018 * distanceFromShoulders
+        }
+      }
     }
     for (const [id, view] of this.views) {
       if (live.has(id)) continue
@@ -460,6 +569,7 @@ export class EntityRenderer {
     for (const geometry of this.geometries) geometry.dispose()
     for (const material of this.materials.values()) material.dispose()
     this.sheepFurMaterial.dispose()
+    this.saddleMaterial.dispose()
     for (const material of this.eyeMaterials.values()) material.dispose()
     this.carriedBlockMaterial.dispose()
     this.mushroomMaterial.dispose()

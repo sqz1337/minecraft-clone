@@ -93,7 +93,40 @@ const TILE_SOURCES: readonly SourceTile[] = [
   [0, 12],  // sandstone side
   [0, 13],  // sandstone bottom
   [14, 9],  // end portal frame top
-  [15, 9]   // end portal frame side
+  [15, 9],  // end portal frame side
+  [6, 6],   // pumpkin side
+  [6, 7],   // pumpkin top
+  [7, 7],   // pumpkin face
+  [1, 6],   // wooden door lower half
+  [1, 5],   // wooden door upper half
+  [3, 3],   // redstone ore
+  [0, 10],  // lapis lazuli ore
+  [8, 4],   // clay
+  [7, 3],   // dead bush
+  [6, 4],   // cactus side
+  [5, 4],   // cactus top
+  [7, 4],   // cactus bottom
+  [12, 4],  // lily pad
+  [15, 8],  // vines
+  [5, 7],   // birch log side
+  [15, 4],  // birch sapling
+  // Classic BlockCloth metadata order (1 orange .. 15 black). These are real
+  // terrain.png cells rather than flat tints, preserving each woven texture.
+  [2, 13],  // orange wool
+  [2, 12],  // magenta wool
+  [2, 11],  // light blue wool
+  [2, 10],  // yellow wool
+  [2, 9],   // lime wool
+  [2, 8],   // pink wool
+  [2, 7],   // gray wool
+  [1, 14],  // light gray wool
+  [1, 13],  // cyan wool
+  [1, 12],  // purple wool
+  [1, 11],  // blue wool
+  [1, 10],  // brown wool
+  [1, 9],   // green wool
+  [1, 8],   // red wool
+  [1, 7]    // black wool
 ]
 
 const GRASS_SIDE_OVERLAY: SourceTile = [6, 2]

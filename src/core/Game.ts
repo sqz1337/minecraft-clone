@@ -16,7 +16,7 @@ import { Crafting, CursorHolder, clickStackSlot, returnStacks, takeIntoCursor } 
 import { ItemDrops } from '../world/ItemDrops'
 import { ITEMS } from '../world/Items'
 import { I } from '../world/ItemIds'
-import { B, isBedBlock, isContainerBlock } from '../world/Blocks'
+import { B, isBedBlock, isContainerBlock, isDoorBlock, isInfestedBlock } from '../world/Blocks'
 import {
   CHEST_SLOTS, ChestState, Containers, FURNACE_FUEL, FURNACE_INPUT, FURNACE_OUTPUT, FurnaceState
 } from '../world/Containers'
@@ -100,6 +100,7 @@ export class Game {
   private spawnerTimer = 1
   private initializedStructureChests = new Set<string>()
   private initializedVillageChunks = new Set<string>()
+  private initializedVillageDoorChunks = new Set<string>()
   private personalSpawn: { x: number; y: number; z: number } | null = null
   private worldSpawn = { x: 0, y: SEA_LEVEL + 1, z: 0 }
 
@@ -200,6 +201,7 @@ export class Game {
     const saved = this.saveStore.load()
     this.initializedStructureChests = new Set(saved?.structureChests ?? [])
     this.initializedVillageChunks = new Set(saved?.villageChunks ?? [])
+    this.initializedVillageDoorChunks = new Set(saved?.villageDoorChunks ?? [])
     this.personalSpawn = saved?.player.respawnX !== undefined && saved.player.respawnY !== undefined && saved.player.respawnZ !== undefined
       ? { x: saved.player.respawnX, y: saved.player.respawnY, z: saved.player.respawnZ }
       : null
@@ -209,7 +211,7 @@ export class Game {
     const preset = this.settings.preset
     this.applyPixelRatio()
 
-    const gen = new WorldGen(this.seedStr)
+    const gen = new WorldGen(this.seedStr, saved?.worldGenVersion)
     this.world = new World(
       gen,
       this.scene,
@@ -288,8 +290,8 @@ export class Game {
       this.entities.explode(x, y, z, radius, this.player.pos)
     }
     this.containers.restore(saved?.containers ?? [])
-    this.entities.restore(saved?.entities ?? [])
-    this.world.onChunkGenerated = (cx, cz) => this.initializeGeneratedChunk(cx, cz)
+    const generatedDuringLoad: Array<readonly [number, number]> = []
+    this.world.onChunkGenerated = (cx, cz) => { generatedDuringLoad.push([cx, cz]) }
     this.containers.onFurnaceChanged = (x, y, z) => {
       const screen = this.screen
       if (screen?.kind === 'furnace' && screen.x === x && screen.y === y && screen.z === z) {
@@ -332,7 +334,7 @@ export class Game {
     const naturalSpawn = gen.findSpawn()
     this.worldSpawn = {
       x: naturalSpawn.x + 0.5,
-      y: Math.max(SEA_LEVEL, gen.heightAt(naturalSpawn.x, naturalSpawn.z)) + 1.05,
+      y: Math.max(gen.seaLevel, gen.heightAt(naturalSpawn.x, naturalSpawn.z)) + 1.05,
       z: naturalSpawn.z + 0.5
     }
     const spawn = saved?.player ?? naturalSpawn
@@ -342,6 +344,12 @@ export class Game {
         ? (f < 0.6 ? 'Restoring terrain' : 'Rebuilding meshes')
         : (f < 0.6 ? 'Generating terrain' : 'Building meshes'))
     })
+    if (saved) {
+      for (const entity of saved.entities) this.world.ensureGeneratedAt(entity.x, entity.z, 2)
+      this.entities.restore(saved.entities)
+    }
+    for (const [cx, cz] of generatedDuringLoad) this.initializeGeneratedChunk(cx, cz)
+    this.world.onChunkGenerated = (cx, cz) => this.initializeGeneratedChunk(cx, cz)
 
     if (saved) {
       this.player.teleport(
@@ -371,7 +379,7 @@ export class Game {
     } else {
       // Land exactly on the terrain that actually generated.
       let sy = this.world.topSolidY(spawn.x, spawn.z)
-      if (sy < 0 || sy < SEA_LEVEL - 1) sy = Math.max(SEA_LEVEL, this.world.gen.heightAt(spawn.x, spawn.z))
+      if (sy < 0 || sy < gen.seaLevel - 1) sy = Math.max(gen.seaLevel, this.world.gen.heightAt(spawn.x, spawn.z))
       this.player.teleport(spawn.x + 0.5, sy + 1.05, spawn.z + 0.5, spawn.yaw)
     }
 
@@ -468,8 +476,10 @@ export class Game {
       blockFacings: this.world.serializeBlockFacings(),
       scheduledTicks: this.world.serializeScheduledTicks(),
       entities: this.entities.serialize(),
+      worldGenVersion: this.world.gen.generatorVersion,
       structureChests: [...this.initializedStructureChests],
-      villageChunks: [...this.initializedVillageChunks]
+      villageChunks: [...this.initializedVillageChunks],
+      villageDoorChunks: [...this.initializedVillageDoorChunks]
     })
 
     if (ok) {
@@ -693,6 +703,10 @@ export class Game {
     else if (hit.id === B.CHEST) this.openChest(hit.x, hit.y, hit.z)
     else if (hit.id === B.ENCHANTING_TABLE) this.openEnchanting(hit.x, hit.y, hit.z)
     else if (isBedBlock(hit.id)) this.useBed(hit)
+    else if (isDoorBlock(hit.id)) {
+      const open = this.world.doorState(hit.x, hit.y, hit.z) === 'open'
+      this.world.setDoorOpen(hit.x, hit.y, hit.z, !open)
+    }
   }
 
   /** Attaches deterministic loot and persistent villagers to freshly generated structure chunks. */
@@ -710,6 +724,19 @@ export class Game {
     }
 
     const chunkKey = `${cx},${cz}`
+    const villages = this.world.gen.villageFeaturesIn(cx, cz)
+    for (const village of villages) this.entities.registerVillage(village)
+    if (!this.initializedVillageDoorChunks.has(chunkKey)) {
+      for (const village of villages) {
+        for (const door of village.doors) {
+          if (Math.floor(door.x / CHUNK_SIZE) !== cx || Math.floor(door.z / CHUNK_SIZE) !== cz) continue
+          if (this.world.doorState(door.x, door.y, door.z)) continue
+          this.world.placeDoor(door.x, door.y, door.z, door.facing)
+        }
+      }
+      this.initializedVillageDoorChunks.add(chunkKey)
+    }
+
     if (this.initializedVillageChunks.has(chunkKey)) return
     this.initializedVillageChunks.add(chunkKey)
     const spots = this.world.gen.villagerSpawnsIn(cx, cz)
@@ -718,13 +745,17 @@ export class Game {
       let y = spot.y
       for (let lift = 0; lift < 4 && (this.world.isSolid(spot.x, y, spot.z) || this.world.isSolid(spot.x, y + 1, spot.z)); lift++) y++
       const profession = this.villagerProfessionAt(spot.x, spot.z)
+      if (!this.entities.canSpawnEntity('villager', spot.x + 0.5, y + 0.01, spot.z + 0.5)) continue
       this.entities.spawn('villager', spot.x + 0.5, y + 0.01, spot.z + 0.5, {
         persistent: true,
         bypassMobCap: true,
-        id: `villager-${cx}-${cz}-${index}`,
+        id: `villager-${spot.villageId}-${spot.x}-${spot.z}-${index}`,
         profession,
         homeX: spot.x + 0.5,
-        homeZ: spot.z + 0.5
+        homeY: y + 0.01,
+        homeZ: spot.z + 0.5,
+        villageId: spot.villageId,
+        homeDoorKey: spot.homeDoorKey
       })
     }
   }
@@ -801,7 +832,7 @@ export class Game {
       const wz = centerZ + (py - size / 2) * scale
       const info = this.world.gen.columnInfo(wx, wz)
       const color = palette[info.biome] ?? palette[2]
-      const shade = clamp(0.75 + (info.height - SEA_LEVEL) * 0.012, 0.62, 1.2)
+      const shade = clamp(0.75 + (info.height - this.world.gen.seaLevel) * 0.012, 0.62, 1.2)
       const offset = (py * size + px) * 4
       pixels[offset] = Math.min(255, color[0] * shade)
       pixels[offset + 1] = Math.min(255, color[1] * shade)
@@ -979,7 +1010,19 @@ export class Game {
       return
     }
     if (holder.cursor && !this.equipment.accepts(slot, holder.cursor)) return
-    clickStackSlot(holder, this.equipment.slots, slot, button)
+    const equipped = this.equipment.slots[slot]
+    const cursor = holder.cursor
+    if (!cursor) {
+      this.equipment.slots[slot] = null
+      holder.cursor = equipped
+    } else if (!equipped) {
+      this.equipment.slots[slot] = cloneStack({ ...cursor, count: 1 })
+      cursor.count--
+      if (cursor.count === 0) holder.cursor = null
+    } else if (cursor.count === 1) {
+      this.equipment.slots[slot] = cursor
+      holder.cursor = equipped
+    }
     this.equipment.onChange()
   }
 
@@ -1205,8 +1248,14 @@ export class Game {
     this.inventory.notify()
   }
 
-  /** Spills the contents of a broken chest or furnace into the world. */
+  /** Applies block-specific break side effects after Interaction has removed the voxel. */
   private blockBroken(x: number, y: number, z: number, id: number): void {
+    if (isInfestedBlock(id)) {
+      // Interaction has already replaced the egg with air, so the centralized
+      // entity validator can assess the exact emergence volume.
+      this.entities.releaseSilverfishFromBlock(x, y, z)
+      return
+    }
     if (!isContainerBlock(id)) return
     const removed = this.containers.remove(x, y, z)
     if (!removed) return
@@ -1252,6 +1301,7 @@ export class Game {
   }
 
   private respawnPlayer(): void {
+    this.entities.dismountRider()
     const deathX = this.player.pos.x, deathY = this.player.pos.y, deathZ = this.player.pos.z
     const deathXp = experienceAfterDeath(this.player.experienceTotal)
     this.player.setExperience(deathXp.retained)
@@ -1294,9 +1344,10 @@ export class Game {
         const x = spawner.x + Math.floor(Math.random() * 7) - 3
         const z = spawner.z + Math.floor(Math.random() * 7) - 3
         const y = spawner.y
-        if (!this.world.isSolid(x, y - 1, z) || this.world.isSolid(x, y, z) || this.world.isSolid(x, y + 1, z)) continue
-        this.entities.spawn(spawner.mob, x + 0.5, y + 0.01, z + 0.5)
-        break
+        if (!this.entities.canSpawnEntity(spawner.mob, x + 0.5, y + 0.01, z + 0.5, {
+          source: 'spawner', darkness: U.uNight.value * 15
+        })) continue
+        if (this.entities.spawn(spawner.mob, x + 0.5, y + 0.01, z + 0.5, { bypassMobCap: true })) break
       }
     }
   }
@@ -1310,6 +1361,11 @@ export class Game {
 
     const playing = this.state === 'playing'
     if (playing) {
+      this.player.syncRidingPose(this.entities.riderPose)
+      if (this.player.wantsDismount) {
+        this.entities.dismountRider()
+        this.player.syncRidingPose(null)
+      }
       this.player.update(dt)
       this.interaction.update(dt)
       this.drops.update(dt, this.player)
@@ -1334,10 +1390,17 @@ export class Game {
     this.world.tickSimulation(playing || this.state === 'inventory' ? dt : 0, p.x, p.z)
     this.entities.update(playing ? dt : 0, {
       player: p,
+      worldSpawn: this.worldSpawn,
+      playerTargetable: this.mode === 'survival' && this.player.health > 0 && !this.player.noclip,
       heldItem: this.interaction.selectedItem?.id ?? null,
+      headItem: this.equipment.slots[0]?.id ?? null,
       look: this.camera.getWorldDirection(this.lookDir),
-      skyDarkness: U.uNight.value * 15
+      skyDarkness: U.uNight.value * 15,
+      timeOfDay: this.env.timeOfDay,
+      // Snow is precipitation but does not wet entities; only actual rain hurts endermen.
+      raining: this.weather.out.rain > 0.25
     })
+    this.player.syncRidingPose(this.entities.riderPose)
     this.projectiles.update(playing ? dt : 0, p)
 
     const biome = this.world.biomeAt(Math.floor(p.x), Math.floor(p.z))

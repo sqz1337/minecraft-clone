@@ -1,4 +1,5 @@
 import { ITEMS, type ArmorSlot } from '../world/Items'
+import { B } from '../world/Blocks'
 import { ARMOR_SLOTS } from './Combat'
 import { cloneStack, type ItemStack } from './Inventory'
 import { enchantmentLevel, shouldConsumeDurability } from './Enchantments'
@@ -35,7 +36,8 @@ export class Equipment {
   }
 
   accepts(index: number, stack: ItemStack | null): boolean {
-    return stack === null || ITEMS[stack.id]?.armor?.slot === ARMOR_SLOTS[index]
+    return stack === null || (index === 0 && stack.id === B.PUMPKIN) ||
+      ITEMS[stack.id]?.armor?.slot === ARMOR_SLOTS[index]
   }
 
   damageAll(amount = 1): void {
@@ -61,7 +63,8 @@ export class Equipment {
     if (saved) for (let i = 0; i < Math.min(4, saved.length); i++) {
       const stack = saved[i]
       const durability = stack ? ITEMS[stack.id]?.armor?.durability ?? 0 : 0
-      if (stack && this.accepts(i, stack) && (stack.damage ?? 0) < durability) {
+      const intact = stack?.id === B.PUMPKIN || (stack && durability > 0 && (stack.damage ?? 0) < durability)
+      if (stack && this.accepts(i, stack) && intact) {
         this.slots[i] = cloneStack({ ...stack, count: 1 })
       }
     }

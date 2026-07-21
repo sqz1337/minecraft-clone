@@ -7,6 +7,7 @@ import type { SavedDrop } from '../world/ItemDrops'
 import type { SavedContainer } from '../world/Containers'
 import { CHEST_SLOTS } from '../world/Containers'
 import { ITEMS } from '../world/Items'
+import { B } from '../world/Blocks'
 import {
   MOB_KINDS, VILLAGER_PROFESSIONS,
   type MobKind, type SavedEntity, type VillagerProfession
@@ -54,9 +55,13 @@ export interface WorldSaveData {
   blockFacings: SerializedBlockFacings
   scheduledTicks: SerializedScheduledTicks
   entities: SavedEntity[]
+  /** Procedural baseline version; absent historical saves use the legacy generator. */
+  worldGenVersion?: 1 | 2 | 3
   /** One-shot procedural gameplay state; optional so version-1 saves remain compatible. */
   structureChests?: string[]
   villageChunks?: string[]
+  /** Chunks whose procedural village door pairs have been backfilled. */
+  villageDoorChunks?: string[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -98,7 +103,10 @@ function parseEquipment(value: unknown): SerializedEquipment {
   for (let i = 0; i < Math.min(4, value.length); i++) {
     const stack = parseStack(value[i])
     const armor = stack ? ITEMS[stack.id]?.armor : null
-    if (stack && armor?.slot === expected[i] && (stack.damage ?? 0) < armor.durability) slots[i] = { ...stack, count: 1 }
+    const wearablePumpkin = i === 0 && stack?.id === B.PUMPKIN
+    if (stack && (wearablePumpkin || (armor?.slot === expected[i] && (stack.damage ?? 0) < armor.durability))) {
+      slots[i] = { ...stack, count: 1 }
+    }
   }
   return slots
 }
@@ -176,7 +184,7 @@ function parseEntities(value: unknown): SavedEntity[] {
   if (!Array.isArray(value)) return []
   const entities: SavedEntity[] = []
   const seen = new Set<string>()
-  for (const raw of value.slice(0, 96)) {
+  for (const raw of value.slice(0, 256)) {
     if (!isRecord(raw) || typeof raw.id !== 'string' || raw.id.length < 1 || raw.id.length > 80 || seen.has(raw.id)) continue
     if (!MOB_KINDS.includes(raw.kind as MobKind)) continue
     if (!isFiniteNumber(raw.x) || !isFiniteNumber(raw.y) || !isFiniteNumber(raw.z) ||
@@ -199,8 +207,15 @@ function parseEntities(value: unknown): SavedEntity[] {
       ...(isFiniteNumber(raw.attackCooldown) ? { attackCooldown: Math.max(0, Math.min(10, raw.attackCooldown)) } : {}),
       ...(isFiniteNumber(raw.fuse) ? { fuse: Math.max(0, Math.min(1.5, raw.fuse)) } : {}),
       ...(isFiniteNumber(raw.angryTime) ? { angryTime: Math.max(0, Math.min(30, raw.angryTime)) } : {}),
-      ...(isFiniteNumber(raw.sizeScale) ? { sizeScale: Math.max(0.25, Math.min(1, raw.sizeScale)) } : {}),
+      ...(isFiniteNumber(raw.sizeScale)
+        ? { sizeScale: raw.sizeScale < 0.75 ? 0.5 : raw.sizeScale < 1.5 ? 1 : 2 }
+        : {}),
+      ...(typeof raw.persistent === 'boolean' ? { persistent: raw.persistent } : {}),
+      ...(isFiniteNumber(raw.despawnAgeTicks)
+        ? { despawnAgeTicks: Math.max(0, Math.min(10_000_000, Math.floor(raw.despawnAgeTicks))) }
+        : {}),
       ...(typeof raw.sheared === 'boolean' ? { sheared: raw.sheared } : {}),
+      ...(raw.kind === 'pig' && typeof raw.saddled === 'boolean' ? { saddled: raw.saddled } : {}),
       ...(isFiniteNumber(raw.woolTimer) ? { woolTimer: Math.max(0, Math.min(300, raw.woolTimer)) } : {}),
       ...(raw.carriedBlock === null || isFiniteNumber(raw.carriedBlock)
         ? { carriedBlock: raw.carriedBlock === null ? null : Math.max(0, Math.min(255, Math.floor(raw.carriedBlock))) }
@@ -209,7 +224,14 @@ function parseEntities(value: unknown): SavedEntity[] {
         ? { profession: raw.profession as VillagerProfession }
         : {}),
       ...(raw.kind === 'villager' && isFiniteNumber(raw.homeX) ? { homeX: raw.homeX } : {}),
-      ...(raw.kind === 'villager' && isFiniteNumber(raw.homeZ) ? { homeZ: raw.homeZ } : {})
+      ...(raw.kind === 'villager' && isFiniteNumber(raw.homeY) ? { homeY: raw.homeY } : {}),
+      ...(raw.kind === 'villager' && isFiniteNumber(raw.homeZ) ? { homeZ: raw.homeZ } : {}),
+      ...(raw.kind === 'villager' && typeof raw.villageId === 'string' && raw.villageId.length <= 80
+        ? { villageId: raw.villageId }
+        : {}),
+      ...(raw.kind === 'villager' && typeof raw.homeDoorKey === 'string' && raw.homeDoorKey.length <= 160
+        ? { homeDoorKey: raw.homeDoorKey }
+        : {})
     })
   }
   return entities
@@ -297,8 +319,10 @@ function parseSave(value: unknown, seed: string): WorldSaveData | null {
     blockFacings: blockFacings as SerializedBlockFacings,
     scheduledTicks,
     entities: parseEntities(value.entities),
+    worldGenVersion: value.worldGenVersion === 3 ? 3 : value.worldGenVersion === 2 ? 2 : 1,
     structureChests: parseKeyList(value.structureChests, /^-?\d+,-?\d+,-?\d+$/, 16384),
-    villageChunks: parseKeyList(value.villageChunks, /^-?\d+,-?\d+$/, 16384)
+    villageChunks: parseKeyList(value.villageChunks, /^-?\d+,-?\d+$/, 16384),
+    villageDoorChunks: parseKeyList(value.villageDoorChunks, /^-?\d+,-?\d+$/, 16384)
   }
 }
 

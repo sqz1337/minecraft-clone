@@ -67,8 +67,14 @@ export const I = {
   BUCKET: 325,
   WATER_BUCKET: 326,
   LAVA_BUCKET: 327,
+  SADDLE: 329,
   RAW_PORKCHOP: 319,
   COOKED_PORKCHOP: 320,
+  REDSTONE: 331,
+  SNOWBALL: 332,
+  MILK_BUCKET: 335,
+  BRICK: 336,
+  CLAY_BALL: 337,
   LEATHER: 334,
   EGG: 344,
   PAPER: 339,
@@ -87,13 +93,18 @@ export const I = {
   SHEARS: 359,
   COMPASS: 345,
   CLOCK: 347,
+  RAW_FISH: 349,
   BED: 355,
   MAP: 358,
   /** Emeralds arrived with 1.3 trading; included to back the villager trade feature. */
   EMERALD: 388,
   /** Realmcraft extension: mutton is not part of classic 1.2.4. */
   RAW_MUTTON: 400,
-  COOKED_MUTTON: 401
+  COOKED_MUTTON: 401,
+  /** Lapis is dye 351:4 in vanilla; this registry has no item metadata and 351 is Bone Meal. */
+  LAPIS: 402,
+  /** Ink sacs are dye 351:0 in vanilla; use a dedicated id until item metadata exists. */
+  INK_SAC: 403
 } as const
 
 export type ItemId = number

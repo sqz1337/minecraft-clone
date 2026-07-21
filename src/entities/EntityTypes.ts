@@ -11,7 +11,9 @@ export type VillagerKind = typeof VILLAGER_KINDS[number]
 export const VILLAGER_PROFESSIONS = ['farmer', 'librarian', 'blacksmith', 'butcher', 'priest'] as const
 export type VillagerProfession = typeof VILLAGER_PROFESSIONS[number]
 
-export const HOSTILE_KINDS = ['zombie', 'skeleton', 'spider', 'creeper', 'slime', 'enderman'] as const
+export const HOSTILE_KINDS = [
+  'zombie', 'skeleton', 'spider', 'creeper', 'slime', 'enderman', 'silverfish'
+] as const
 export type HostileKind = typeof HOSTILE_KINDS[number]
 export const MOB_KINDS = [...PASSIVE_KINDS, ...SPECIAL_PASSIVE_KINDS, ...VILLAGER_KINDS, ...HOSTILE_KINDS] as const
 export type MobKind = typeof MOB_KINDS[number]
@@ -34,17 +36,26 @@ export interface SavedEntity {
   attackCooldown?: number
   fuse?: number
   angryTime?: number
-  /** Model scale multiplier: 1 for normal mobs, 0.5 for split small slimes. */
+  /** Slime model scale: 0.5/1/2 represent vanilla logical sizes 1/2/4. */
   sizeScale?: number
+  /** Named/interacted entities opt out of hostile distance despawning. */
+  persistent?: boolean
+  /** Active hostile ticks spent at least 32 blocks from the nearest player. */
+  despawnAgeTicks?: number
   /** True while a sheep is waiting for its wool to grow back. */
   sheared?: boolean
+  /** Permanent saddle bit on pigs. Riding itself is deliberately session-only. */
+  saddled?: boolean
   woolTimer?: number
   /** Block currently carried by an enderman, or null. */
   carriedBlock?: number | null
   /** Village role and home are present only for generated villagers. */
   profession?: VillagerProfession | null
   homeX?: number
+  homeY?: number
   homeZ?: number
+  villageId?: string | null
+  homeDoorKey?: string | null
 }
 
 export interface EntitySnapshot extends SavedEntity {
@@ -58,15 +69,35 @@ export interface EntitySnapshot extends SavedEntity {
   panicTime: number
   burning: boolean
   sizeScale: number
+  persistent: boolean
+  despawnAgeTicks: number
+  /** Current ordered AI task for passive mobs; null for non-passive entities. */
+  activeTask: string | null
+  /** Absolute head heading/pitch used by watch and idle-look tasks. */
+  headYaw: number
+  headPitch: number
+  /** Classic chicken wing phase; zero for other mobs. */
+  wingRotation: number
+  /** Remaining ticks in the sheep eat-grass animation. */
+  eatGrassTicks: number
   sheared: boolean
+  saddled: boolean
   carriedBlock: number | null
   profession: VillagerProfession | null
   homeX: number
+  homeY: number
   homeZ: number
+  villageId: string | null
+  homeDoorKey: string | null
+  villagerActivity: string | null
   /** Remaining red damage-flash time in seconds. */
   hurtTime: number
   /** Elapsed death-animation time; zero while alive. */
   deathTime: number
+  /** Current AI target. `player` is the local player; mob targets use their stable entity id. */
+  targetId: string | null
+  /** Last position at which the target was actually visible, never its hidden live position. */
+  lastSeenPosition: { x: number; y: number; z: number } | null
 }
 
 export interface EntityDrop {
@@ -75,6 +106,26 @@ export interface EntityDrop {
   max: number
   chance?: number
 }
+
+/** Stable pose consumed by the local player while riding an uncontrolled pig. */
+export interface EntityRiderPose {
+  id: string
+  x: number
+  y: number
+  z: number
+  yaw: number
+  height: number
+}
+
+/**
+ * Inventory-neutral result of a right-click. EntityManager owns entity state;
+ * Interaction applies the returned item transaction to survival inventory.
+ */
+export type EntityInteractionResult =
+  | { type: 'saddle'; consumeHeld: true }
+  | { type: 'ride'; riding: boolean; pose: EntityRiderPose }
+  | { type: 'container'; replaceHeldWith: number }
+  | { type: 'shear'; drops: readonly { id: number; count: number }[]; damageTool: true; transformedTo?: MobKind }
 
 export interface MobDefinition {
   kind: MobKind

@@ -139,15 +139,25 @@ test('save round-trip keeps saturation and mandatory block ticks', () => {
     inventory: Array(36).fill(null),
     drops: [], containers: [], timeOfDay: 0.5,
     weather: { kind: 'clear', nextChange: 10, lightningTimer: 10, out: {} },
-    blockEdits: {}, blockFacings: {}, scheduledTicks: [2, 65, 2, 400, 1]
+    blockEdits: {}, blockFacings: {}, scheduledTicks: [2, 65, 2, 400, 1],
+    worldGenVersion: 3
   }), true)
   const restored = store.load()
   assert.equal(restored.player.saturation, 4)
   assert.deepEqual(restored.scheduledTicks, [2, 65, 2, 400, 1])
+  assert.equal(restored.worldGenVersion, 3)
+
+  const [storageKey, serialized] = [...storage.entries()][0]
+  const historical = JSON.parse(serialized)
+  delete historical.worldGenVersion
+  storage.set(storageKey, JSON.stringify(historical))
+  assert.equal(store.load().worldGenVersion, 1, 'missing historical baselines must remain v1')
 })
 
 test('naturally generated sugar cane always has real water beside its support', () => {
-  const gen = new WorldGen('stage-6-cane-regression')
+  // This regression freezes the original per-column v2 population baseline;
+  // v3's attempt-based BiomeDecorator has dedicated support/seam tests.
+  const gen = new WorldGen('stage-6-cane-regression', 2)
   let caneBases = 0
   for (let cx = -4; cx <= 4; cx++) {
     for (let cz = -4; cz <= 4; cz++) {
@@ -160,10 +170,10 @@ test('naturally generated sugar cane always has real water beside its support', 
             if (chunk.get(lx, y, lz) !== B.SUGARCANE || chunk.get(lx, y - 1, lz) === B.SUGARCANE) continue
             caneBases++
             const supportY = y - 1
-            assert.equal(supportY, SEA_LEVEL)
+            assert.equal(supportY, gen.seaLevel)
             const waterBeside = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => {
               const neighborHeight = gen.columnInfo(wx + dx, wz + dz).height
-              return neighborHeight < supportY && supportY <= SEA_LEVEL
+              return neighborHeight < supportY && supportY <= gen.seaLevel
             })
             assert.equal(waterBeside, true, `invalid cane base at ${wx},${supportY},${wz}`)
           }

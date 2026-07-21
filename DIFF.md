@@ -468,21 +468,10 @@ Nether-мобы и boss/End mechanics в этот аудит не включал
 11. Сначала выбрать цель: только «похоже на beta/1.2» или точная 1.2.4 seed
     compatibility. Второй вариант требует отдельного порта Java PRNG,
     `GenLayer`, octave density generator и точного порядка population calls.
+    Думаю, что порт и seed compatibility делать не нужно, главное чтобы было очень похоже.
 12. Независимо от seed compatibility заменить caves на chunk-crossing recursive
     carvers, добавить ravines и lakes.
 13. Перенести structures на starts + recursive components + bounding boxes;
     исправить spacing и portal-room spawner.
 14. Восстановить biome decorators, все руды 1.2.4, weighted vegetation и полные
     tree generators.
-
-## Итоговая оценка
-
-Если цель проекта — узнаваемый браузерный Minecraft-like, нынешняя генерация уже
-даёт подходящее разнообразие. Если цель — механическая верность Java 1.2.4, то
-ключевая работа не в настройке нескольких шансов: необходимы три архитектурных
-слоя — vanilla-подобный chunk population pipeline, task/target AI с senses и
-pathfinding, а также централизованная проверка spawn volume.
-
-Самый заметный пользовательский дефект сейчас — не worldgen, а связка
-`distance-only acquisition → direct steering`. Именно она создаёт эффект, будто
-зомби и enderman видят игрока через X-ray.

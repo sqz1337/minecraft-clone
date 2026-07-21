@@ -1,4 +1,4 @@
-import { B } from './Blocks'
+import { B, WOOL_BLOCKS } from './Blocks'
 import { I } from './ItemIds'
 import type { ItemStack } from '../player/Inventory'
 
@@ -42,7 +42,9 @@ function shapeless(ingredients: readonly Ingredient[], id: number, count = 1): S
   return { kind: 'shapeless', ingredients, result: { id, count } }
 }
 
-const ANY_LOG: Ingredient = [B.LOG, B.PINELOG, B.JUNGLE_LOG]
+const ANY_LOG: Ingredient = [B.LOG, B.PINELOG, B.JUNGLE_LOG, B.BIRCH_LOG]
+/** Every metadata-free wool color is interchangeable in generic cloth recipes. */
+export const ANY_WOOL: Ingredient = WOOL_BLOCKS
 
 interface ToolMaterial {
   readonly item: Ingredient
@@ -82,6 +84,7 @@ export const RECIPES: readonly Recipe[] = [
   shaped(['PP', 'PP'], { P: B.PLANKS }, B.CRAFTING_TABLE),
   shaped(['CCC', 'C C', 'CCC'], { C: B.COBBLESTONE }, B.FURNACE),
   shaped(['PPP', 'P P', 'PPP'], { P: B.PLANKS }, B.CHEST),
+  shaped(['PP', 'PP', 'PP'], { P: B.PLANKS }, B.WOOD_DOOR_LOWER),
   shaped(['C', 'S'], { C: I.COAL, S: I.STICK }, B.TORCH, 4),
   shaped(['P P', ' P '], { P: B.PLANKS }, I.BOWL, 4),
   shaped(['WWW'], { W: I.WHEAT }, I.BREAD),
@@ -99,13 +102,14 @@ export const RECIPES: readonly Recipe[] = [
   shapeless([I.IRON_INGOT, I.FLINT], I.FLINT_AND_STEEL),
   shaped(['GSG', 'SGS', 'GSG'], { G: I.GUNPOWDER, S: B.SAND }, B.TNT),
   shaped(['SS', 'SS'], { S: I.STRING }, B.WOOL),
-  shaped(['WWW', 'PPP'], { W: B.WOOL, P: B.PLANKS }, I.BED),
+  shaped(['WWW', 'PPP'], { W: ANY_WOOL, P: B.PLANKS }, I.BED),
   shaped(['SS', 'SS'], { S: B.STONE }, B.STONE_BRICK, 4),
   shaped(['SS', 'SS'], { S: B.SAND }, B.SANDSTONE),
+  shaped(['CC', 'CC'], { C: I.CLAY_BALL }, B.CLAY),
+  shaped(['BB', 'BB'], { B: I.BRICK }, B.BRICKS),
   shaped(['I I', 'ISI', 'I I'], { I: I.IRON_INGOT, S: I.STICK }, B.RAIL, 16),
-  // Classic compass and clock need redstone; flint stands in until stage 14.
-  shaped([' I ', 'IFI', ' I '], { I: I.IRON_INGOT, F: I.FLINT }, I.COMPASS),
-  shaped([' G ', 'GFG', ' G '], { G: I.GOLD_INGOT, F: I.FLINT }, I.CLOCK),
+  shaped([' I ', 'IRI', ' I '], { I: I.IRON_INGOT, R: I.REDSTONE }, I.COMPASS),
+  shaped([' G ', 'GRG', ' G '], { G: I.GOLD_INGOT, R: I.REDSTONE }, I.CLOCK),
   shaped(['PPP', 'PCP', 'PPP'], { P: I.PAPER, C: I.COMPASS }, I.MAP),
   ...TOOL_MATERIALS.flatMap(m => [
     shaped(['M', 'M', 'S'], { M: m.item, S: I.STICK }, m.sword),
@@ -136,6 +140,7 @@ const SMELTING = new Map<number, RecipeResult>([
   [B.DIAMOND_ORE, { id: I.DIAMOND, count: 1 }],
   [B.SAND, { id: B.GLASS, count: 1 }],
   [B.COBBLESTONE, { id: B.STONE, count: 1 }],
+  [I.CLAY_BALL, { id: I.BRICK, count: 1 }],
   [I.RAW_PORKCHOP, { id: I.COOKED_PORKCHOP, count: 1 }],
   [I.RAW_BEEF, { id: I.STEAK, count: 1 }],
   [I.RAW_CHICKEN, { id: I.COOKED_CHICKEN, count: 1 }],
@@ -148,8 +153,10 @@ const FUEL_SECONDS = new Map<number, number>([
   [B.LOG, 15],
   [B.PINELOG, 15],
   [B.JUNGLE_LOG, 15],
+  [B.BIRCH_LOG, 15],
   [B.CRAFTING_TABLE, 15],
   [B.CHEST, 15],
+  [B.WOOD_DOOR_LOWER, 10],
   [I.WOODEN_SWORD, 10],
   [I.WOODEN_SHOVEL, 10],
   [I.WOODEN_PICKAXE, 10],
@@ -170,6 +177,7 @@ const SMELT_XP = new Map<number, number>([
   [B.DIAMOND_ORE, 1],
   [B.SAND, 0.1],
   [B.COBBLESTONE, 0.1],
+  [I.CLAY_BALL, 0.3],
   [I.RAW_PORKCHOP, 0.35],
   [I.RAW_BEEF, 0.35],
   [I.RAW_CHICKEN, 0.35],

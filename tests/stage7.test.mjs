@@ -145,13 +145,17 @@ test('crowded animals share a short step-sound gate instead of stacking every sa
   assert.ok(steps.length <= 20, `too many overlapping step sounds: ${steps.length}`)
 })
 
-test('feeding two adults creates one persistent growing baby', () => {
+test('feeding two adults creates one persistent growing baby after courtship', () => {
   const manager = new EntityManager(flatWorld())
   const first = manager.spawn('cow', 0, 1, 0)
   const second = manager.spawn('cow', 6, 1, 0)
   assert.equal(manager.feed(first.id, I.WHEAT), true)
   assert.equal(manager.feed(second.id, I.WHEAT), true)
-  for (let i = 0; i < 20 && manager.count === 2; i++) {
+  for (let i = 0; i < 59; i++) {
+    manager.update(0.05, { player: { x: 3, y: 1, z: 0 }, heldItem: null })
+  }
+  assert.equal(manager.count, 2, 'courtship should last about 60 ticks')
+  for (let i = 0; i < 45 && manager.count === 2; i++) {
     manager.update(0.05, { player: { x: 3, y: 1, z: 0 }, heldItem: null })
   }
   assert.equal(manager.count, 3)
@@ -177,7 +181,7 @@ test('entities escape embedded blocks and step over a full one-block obstacle', 
   }
 
   const embeddedManager = new EntityManager(obstacleWorld)
-  embeddedManager.spawn('cow', 1.5, 1, 0.5)
+  embeddedManager.spawn('cow', 1.5, 1, 0.5, { bypassPositionValidation: true })
   embeddedManager.update(0.05, { player: { x: 3, y: 1, z: 0.5 }, heldItem: I.WHEAT })
   assert.ok(embeddedManager.snapshots[0].y >= 2, 'embedded cow was not lifted out of terrain')
 

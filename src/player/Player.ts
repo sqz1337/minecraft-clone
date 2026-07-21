@@ -1,11 +1,12 @@
 import * as THREE from 'three'
 import { clamp, lerp } from '../util/math'
-import { B, SOLID, CROSS, SOUND_CAT, isWater, isLava, fluidLevel } from '../world/Blocks'
+import { B, SOUND_CAT, blockCollisionBox, isWater, isLava, fluidLevel } from '../world/Blocks'
 import type { World } from '../world/World'
 import type { AudioMan } from '../audio/Audio'
 import type { GameMode } from '../core/Settings'
 import { damageAfterArmor } from './Combat'
 import { experienceProgress, spendExperienceLevels } from './Experience'
+import type { EntityRiderPose } from '../entities/EntityTypes'
 
 const HALF = 0.3
 const HEIGHT = 1.8
@@ -20,6 +21,12 @@ const SWIM = 3.1
 const FLY = 13
 const FLY_SPRINT = 26
 const WATER_SURFACE = 0.875
+
+interface CollisionHit {
+  x: number; y: number; z: number
+  minX: number; minY: number; minZ: number
+  maxX: number; maxY: number; maxZ: number
+}
 const COYOTE_TIME = 0.1
 const JUMP_BUFFER_TIME = 0.13
 
@@ -80,6 +87,7 @@ export class Player {
   private hungerEffectTime = 0
   private poisonTime = 0
   private poisonTickTimer = 1
+  private ridingPose: EntityRiderPose | null = null
   /** Seconds of lingering burn after leaving fire or lava; water extinguishes it. */
   private burnTime = 0
   private dead = false
@@ -126,6 +134,7 @@ export class Player {
   }
 
   teleport(x: number, y: number, z: number, yaw = 0, pitch = -0.08): void {
+    this.ridingPose = null
     this.pos.set(x, y, z)
     this.vel.set(0, 0, 0)
     this.fallPeakY = y
@@ -212,6 +221,55 @@ export class Player {
     else this.poisonTime = Math.max(this.poisonTime, seconds)
   }
 
+  /** Milk clears every status effect currently implemented by the survival loop. */
+  clearEffects(): void {
+    this.hungerEffectTime = 0
+    this.poisonTime = 0
+    this.poisonTickTimer = 1
+  }
+
+  get ridingEntityId(): string | null { return this.ridingPose?.id ?? null }
+  get wantsDismount(): boolean {
+    return this.ridingPose !== null && (this.keys.has('ControlLeft') || this.keys.has('KeyC'))
+  }
+
+  /**
+   * Pins the player's feet above a pig while leaving the camera yaw/pitch free.
+   * A null pose dismounts beside the last anchor when a safe adjacent cell exists.
+   */
+  syncRidingPose(pose: EntityRiderPose | null): void {
+    if (pose) {
+      this.ridingPose = { ...pose }
+      this.pos.set(pose.x, pose.y + pose.height * 0.72, pose.z)
+      this.vel.set(0, 0, 0)
+      this.onGround = false
+      this.fallPeakY = this.pos.y
+      this.syncCamera(0)
+      return
+    }
+    const previous = this.ridingPose
+    if (!previous) return
+    this.ridingPose = null
+    const sideX = Math.cos(previous.yaw), sideZ = -Math.sin(previous.yaw)
+    const forwardX = -Math.sin(previous.yaw), forwardZ = -Math.cos(previous.yaw)
+    const candidates = [
+      [sideX, sideZ], [-sideX, -sideZ], [forwardX, forwardZ], [-forwardX, -forwardZ]
+    ] as const
+    const y = previous.y + 0.02
+    let placed = false
+    for (const [dx, dz] of candidates) {
+      const x = previous.x + dx * 1.25, z = previous.z + dz * 1.25
+      if (this.collides(x, y, z) || !this.collides(x, y - 0.18, z)) continue
+      this.pos.set(x, y, z)
+      placed = true
+      break
+    }
+    if (!placed) this.pos.set(previous.x, previous.y + previous.height + 0.02, previous.z)
+    this.vel.set(0, 0, 0)
+    this.fallPeakY = this.pos.y
+    this.syncCamera(0)
+  }
+
   damage(amount: number, bypassArmor = false): boolean {
     if (this.mode !== 'survival' || this.noclip || this.dead || amount <= 0 || this.damageCooldown > 0) return false
     const actual = bypassArmor ? Math.ceil(amount) : damageAfterArmor(amount, this.armorPoints, this.protectionLevels)
@@ -258,23 +316,47 @@ export class Player {
     return target.set(this.pos.x, this.pos.y + (this.crouching ? EYE_CROUCH : EYE), this.pos.z)
   }
 
-  private isSolidAt(x: number, y: number, z: number): boolean {
-    const id = this.world.getBlock(x, y, z)
-    return SOLID[id] && !CROSS[id]
-  }
-
-  private collides(px: number, py: number, pz: number): { x: number, y: number, z: number } | null {
+  private collides(px: number, py: number, pz: number): CollisionHit | null {
+    const playerMinX = px - HALF, playerMaxX = px + HALF
+    const playerMinY = py, playerMaxY = py + HEIGHT
+    const playerMinZ = pz - HALF, playerMaxZ = pz + HALF
     const x0 = Math.floor(px - HALF), x1 = Math.floor(px + HALF)
     const y0 = Math.floor(py), y1 = Math.floor(py + HEIGHT)
     const z0 = Math.floor(pz - HALF), z1 = Math.floor(pz + HALF)
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         for (let z = z0; z <= z1; z++) {
-          if (this.isSolidAt(x, y, z)) return { x, y, z }
+          const shape = blockCollisionBox(this.world.getBlock(x, y, z))
+          if (!shape) continue
+          const minX = x + shape.minX, maxX = x + shape.maxX
+          const minY = y + shape.minY, maxY = y + shape.maxY
+          const minZ = z + shape.minZ, maxZ = z + shape.maxZ
+          if (playerMaxX > minX && playerMinX < maxX && playerMaxY > minY && playerMinY < maxY &&
+            playerMaxZ > minZ && playerMinZ < maxZ) {
+            return { x, y, z, minX, minY, minZ, maxX, maxY, maxZ }
+          }
         }
       }
     }
     return null
+  }
+
+  /** Cactus damage uses its inset AABB, expanded slightly across collision separation. */
+  private touchesCactus(): boolean {
+    const margin = 1 / 64
+    const minX = this.pos.x - HALF - margin, maxX = this.pos.x + HALF + margin
+    const minY = this.pos.y, maxY = this.pos.y + HEIGHT
+    const minZ = this.pos.z - HALF - margin, maxZ = this.pos.z + HALF + margin
+    for (let x = Math.floor(minX); x <= Math.floor(maxX); x++) {
+      for (let y = Math.floor(minY); y <= Math.floor(maxY); y++) {
+        for (let z = Math.floor(minZ); z <= Math.floor(maxZ); z++) {
+          if (this.world.getBlock(x, y, z) !== B.CACTUS) continue
+          if (maxX > x + 1 / 16 && minX < x + 15 / 16 && maxY > y && minY < y + 1 &&
+            maxZ > z + 1 / 16 && minZ < z + 15 / 16) return true
+        }
+      }
+    }
+    return false
   }
 
   /** True if placing a block at (x,y,z) would intersect the player. */
@@ -294,6 +376,14 @@ export class Player {
   update(dt: number): void {
     this.hurtTime = Math.max(0, this.hurtTime - dt * 1.65)
     const startX = this.pos.x, startZ = this.pos.z
+    if (this.ridingPose) {
+      this.crouching = false
+      this.sprinting = false
+      this.vel.set(0, 0, 0)
+      this.updateSurvival(dt, startX, startZ)
+      this.syncCamera(dt)
+      return
+    }
     const k = this.keys
     const freeFlight = this.flying || this.noclip
     const fwd = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0)
@@ -377,7 +467,7 @@ export class Player {
       let nx = this.pos.x + this.vel.x * sdt
       let hit = this.collides(nx, this.pos.y, this.pos.z)
       if (hit) {
-        nx = this.vel.x > 0 ? hit.x - HALF - 0.001 : hit.x + 1 + HALF + 0.001
+        nx = this.vel.x > 0 ? hit.minX - HALF - 0.001 : hit.maxX + HALF + 0.001
         if (this.inWater && k.has('Space') && this.onGroundOrNear()) this.vel.y = Math.max(this.vel.y, 5.5)
         this.vel.x = 0
       } else if (sneakHold && !this.collides(nx, this.pos.y - 0.1, this.pos.z)) {
@@ -390,7 +480,7 @@ export class Player {
       let nz = this.pos.z + this.vel.z * sdt
       hit = this.collides(this.pos.x, this.pos.y, nz)
       if (hit) {
-        nz = this.vel.z > 0 ? hit.z - HALF - 0.001 : hit.z + 1 + HALF + 0.001
+        nz = this.vel.z > 0 ? hit.minZ - HALF - 0.001 : hit.maxZ + HALF + 0.001
         if (this.inWater && k.has('Space') && this.onGroundOrNear()) this.vel.y = Math.max(this.vel.y, 5.5)
         this.vel.z = 0
       } else if (sneakHold && !this.collides(this.pos.x, this.pos.y - 0.1, nz)) {
@@ -403,10 +493,10 @@ export class Player {
       hit = this.collides(this.pos.x, ny, this.pos.z)
       if (hit) {
         if (this.vel.y <= 0) {
-          ny = hit.y + 1 + 0.001
+          ny = hit.maxY + 0.001
           this.onGround = true
         } else {
-          ny = hit.y - HEIGHT - 0.001
+          ny = hit.minY - HEIGHT - 0.001
         }
         this.vel.y = 0
       }
@@ -483,6 +573,8 @@ export class Player {
   private updateSurvival(dt: number, startX: number, startZ: number): void {
     if (this.mode !== 'survival' || this.dead) return
     this.damageCooldown = Math.max(0, this.damageCooldown - dt)
+
+    if (this.touchesCactus()) this.damage(1)
 
     const bodyBlock = this.world.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + 0.7), Math.floor(this.pos.z))
     const inLavaNow = this.inLava || isLava(bodyBlock)

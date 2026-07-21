@@ -128,14 +128,14 @@ test('enchantments survive inventory, equipment and world-save validation', () =
 
 test('mob deaths emit recoverable XP through the shared entity hook', () => {
   const world = {
-    getBlock: () => B.AIR, isSolid: (_x, y) => y < 0, isWater: () => false,
-    topSolidY: () => -1, biomeAt: () => 2, getLightLevel: () => 15
+    getBlock: (_x, y) => y <= 0 ? B.GRASS : B.AIR, isSolid: (_x, y) => y <= 0, isWater: () => false,
+    topSolidY: () => 0, biomeAt: () => 2, getLightLevel: () => 15
   }
   const experience = []
   const manager = new EntityManager(world, undefined, { experience: (_x, _y, _z, amount) => experience.push(amount) })
-  const zombie = manager.spawn('zombie', 0, 0, 0)
+  const zombie = manager.spawn('zombie', 0, 1, 0)
   manager.damage(zombie.id, 100, 0, 1)
   assert.deepEqual(experience, [])
-  for (let i = 0; i < 15; i++) manager.update(0.05, { player: { x: 0, y: 0, z: 0 }, heldItem: null })
+  for (let i = 0; i < 15; i++) manager.update(0.05, { player: { x: 0, y: 1, z: 0 }, heldItem: null })
   assert.deepEqual(experience, [5])
 })

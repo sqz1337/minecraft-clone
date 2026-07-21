@@ -49,7 +49,9 @@ function flatWorld() {
 }
 
 test('stage 8 registers combat drops, bows and four complete armor tiers', () => {
-  assert.deepEqual(HOSTILE_KINDS, ['zombie', 'skeleton', 'spider', 'creeper', 'slime', 'enderman'])
+  assert.deepEqual(HOSTILE_KINDS, [
+    'zombie', 'skeleton', 'spider', 'creeper', 'slime', 'enderman', 'silverfish'
+  ])
   assert.equal(ITEMS[I.BOW].ranged, 'bow')
   assert.equal(durabilityForItem(I.BOW), 384)
   assert.equal(ITEMS[I.DIAMOND_CHESTPLATE].armor.points, 8)
@@ -87,7 +89,8 @@ test('hostile spawn rules enforce real light, distance, biome and mob cap', () =
   assert.equal(hostileSpawnAllowed(7, 28, 0, BIOME.PLAINS), true)
   assert.equal(hostileSpawnAllowed(8, 28, 0, BIOME.PLAINS), false)
   assert.equal(hostileSpawnAllowed(7, 12, 0, BIOME.PLAINS), false)
-  assert.equal(hostileSpawnAllowed(7, 28, 0, BIOME.OCEAN), false)
+  assert.equal(hostileSpawnAllowed(7, 28, 0, BIOME.OCEAN), true)
+  assert.equal(hostileSpawnAllowed(7, 28, 0, BIOME.MUSHROOM), false)
   assert.equal(hostileSpawnAllowed(7, 28, HOSTILE_MOB_CAP, BIOME.FOREST), false)
 })
 

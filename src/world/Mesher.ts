@@ -1,5 +1,8 @@
 import * as THREE from 'three'
-import { B, OPAQUE, CROSS, ORE, TILE, tileFor, isWater, isLava, isLeafBlock, isBedBlock, fluidLevel, type HorizontalFace } from './Blocks'
+import {
+  B, SOLID, OPAQUE, CROSS, ORE, RENDER_SHAPE, TILE, tileFor, isWater, isLava, isLeafBlock, isBedBlock,
+  isDoorBlock, isDoorOpen, fluidLevel, canSupportVine, type HorizontalFace
+} from './Blocks'
 import { Chunk, CHUNK_SIZE, WORLD_HEIGHT } from './Chunk'
 import { GRASS_TINT } from './WorldGen'
 import { hash301, hash01 } from '../util/math'
@@ -354,7 +357,113 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           continue
         }
 
-        if (CROSS[id]) {
+        if (RENDER_SHAPE[id] === 'cactus') {
+          // Cacti are full-height but inset one pixel on X/Z, so their side
+          // textures never merge into an opaque cube or a neighboring block.
+          const inset = 1 / 16
+          const light = sampleLight(wx, y + 1, wz)
+          const lightFactor = 0.28 + 0.72 * light / 15
+          for (let f = 0; f < 6; f++) {
+            const fd = FACES[f]
+            const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, f))
+            for (let ci = 0; ci < 4; ci++) {
+              const cc = fd.c[ci]
+              const uv = fd.uv[ci]
+              foliage.vertex(
+                wx + (cc[0] === 0 ? inset : 1 - inset), y + cc[1],
+                wz + (cc[2] === 0 ? inset : 1 - inset),
+                fd.n[0], fd.n[1], fd.n[2],
+                uv[0] === 0 ? u0 : u1, uv[1] === 0 ? v0 : v1,
+                lightFactor, lightFactor, lightFactor, 0
+              )
+            }
+            foliage.quad(false)
+          }
+          continue
+        }
+
+        if (RENDER_SHAPE[id] === 'lily') {
+          // A lily pad is a paper-thin, double-sided surface just above water.
+          const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 2))
+          const light = sampleLight(wx, y + 1, wz)
+          const lightFactor = 0.28 + 0.72 * light / 15
+          const r = 0x20 / 255 * lightFactor
+          const g = 0x80 / 255 * lightFactor
+          const bcol = 0x30 / 255 * lightFactor
+          const ly = y + 1 / 64
+          const positions = [[wx, wz], [wx, wz + 1], [wx + 1, wz], [wx + 1, wz + 1]] as const
+          const baseUvs = [[u0, v0], [u0, v1], [u1, v0], [u1, v1]] as const
+          const rotations = [
+            [0, 1, 2, 3], [1, 3, 0, 2], [3, 2, 1, 0], [2, 0, 3, 1]
+          ] as const
+          const rotation = hash301(wx, 0, wz, seed ^ 0x11e1) * 4 | 0
+          for (let corner = 0; corner < 4; corner++) {
+            const uv = baseUvs[rotations[rotation][corner]]
+            foliage.vertex(positions[corner][0], ly, positions[corner][1], 0, 1, 0,
+              uv[0], uv[1], r, g, bcol, 0)
+          }
+          foliage.quad(false)
+          continue
+        }
+
+        if (RENDER_SHAPE[id] === 'vine') {
+          // Metadata-free generated vines infer their attached faces from
+          // neighboring blocks. Hanging segments inherit the first faces found
+          // up their contiguous column, preserving long jungle curtains.
+          let attached: HorizontalFace | undefined = facings?.get(colBase | y)
+          for (let sy = y; attached === undefined && sy < Math.min(WORLD_HEIGHT, y + 16) && sample(wx, sy, wz) === B.VINE; sy++) {
+            for (const f of [0, 1, 4, 5] as const) {
+              const fd = FACES[f]
+              if (canSupportVine(sample(wx + fd.n[0], sy, wz + fd.n[2]))) {
+                attached = f
+                break
+              }
+            }
+          }
+          const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 0))
+          const light = sampleLight(wx, y, wz)
+          const lightFactor = 0.28 + 0.72 * light / 15
+          const r = tint[0] * 1.35 * lightFactor
+          const g = tint[1] * 1.35 * lightFactor
+          const bcol = tint[2] * 1.35 * lightFactor
+          const epsilon = 1 / 128
+          if (attached !== undefined) {
+            const f = attached
+            const fd = FACES[f]
+            for (let ci = 0; ci < 4; ci++) {
+              const cc = fd.c[ci]
+              const uv = fd.uv[ci]
+              let vx = wx + cc[0], vz = wz + cc[2]
+              if (f === 0) vx -= epsilon
+              else if (f === 1) vx += epsilon
+              else if (f === 4) vz -= epsilon
+              else vz += epsilon
+              foliage.vertex(
+                vx, y + cc[1], vz, fd.n[0], 0, fd.n[2],
+                uv[0] === 0 ? u0 : u1, uv[1] === 0 ? v0 : v1,
+                r, g, bcol, 0
+              )
+            }
+            foliage.quad(false)
+          }
+          if (attached === undefined) {
+            // Corrupt/edited unsupported vines remain visible until their
+            // scheduled support check removes them.
+            for (const [x0, z0, x1, z1] of [
+              [wx + 0.15, wz + 0.15, wx + 0.85, wz + 0.85],
+              [wx + 0.15, wz + 0.85, wx + 0.85, wz + 0.15]
+            ] as const) {
+              foliage.vertex(x0, y, z0, 0, 1, 0, u0, v0, r, g, bcol, 0)
+              foliage.vertex(x1, y, z1, 0, 1, 0, u1, v0, r, g, bcol, 0)
+              foliage.vertex(x0, y + 1, z0, 0, 1, 0, u0, v1, r, g, bcol, 0)
+              foliage.vertex(x1, y + 1, z1, 0, 1, 0, u1, v1, r, g, bcol, 0)
+              foliage.quad(false)
+            }
+          }
+          continue
+        }
+
+        if (RENDER_SHAPE[id] === 'cross') {
           // decoration density thinning for low quality
           if (id === B.TALLGRASS && hash01(wx, wz, seed ^ 0xfeed) > grassDensity) continue
           const tile = tileFor(id, 0)
@@ -407,6 +516,11 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
 
         if (isBedBlock(id)) {
           addBedBlock(solid, atlas, wx, y, wz, id, facings?.get(colBase | y) ?? 4, sampleLight(wx, y + 1, wz), sample)
+          continue
+        }
+
+        if (isDoorBlock(id)) {
+          addDoorBlock(foliage, atlas, wx, y, wz, id, facings?.get(colBase | y) ?? 4, sampleLight(wx, y, wz))
           continue
         }
 
@@ -496,6 +610,44 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
     largeChest: largeChest.build(),
     xray: xray.build(false)
   }
+}
+
+/** Wooden doors are two independently textured, 1/16-inset planes. */
+function addDoorBlock(
+  builder: GeomBuilder,
+  atlas: Atlas,
+  wx: number,
+  y: number,
+  wz: number,
+  id: number,
+  facing: HorizontalFace,
+  light: number
+): void {
+  // Opening rotates clockwise around the visually shared corner. The world
+  // collision intentionally stays cell-based: closed cells block, open cells do not.
+  const openFacing: Record<HorizontalFace, HorizontalFace> = { 0: 5, 1: 4, 4: 0, 5: 1 }
+  const planeFacing = isDoorOpen(id) ? openFacing[facing] : facing
+  const fd = FACES[planeFacing]
+  const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, planeFacing, facing))
+  const lf = 0.28 + 0.72 * light / 15
+  const inset = 1 / 16
+
+  for (let ci = 0; ci < 4; ci++) {
+    const cc = fd.c[ci]
+    const uv = fd.uv[ci]
+    let px = wx + cc[0], pz = wz + cc[2]
+    if (planeFacing === 0) px = wx + 1 - inset
+    else if (planeFacing === 1) px = wx + inset
+    else if (planeFacing === 4) pz = wz + 1 - inset
+    else pz = wz + inset
+    builder.vertex(
+      px, y + cc[1], pz,
+      fd.n[0], fd.n[1], fd.n[2],
+      uv[0] === 0 ? u0 : u1, uv[1] === 0 ? v0 : v1,
+      lf, lf, lf, 0
+    )
+  }
+  builder.quad(false)
 }
 
 /** Beds render as 9/16-tall boxes with facing-rotated top textures. */

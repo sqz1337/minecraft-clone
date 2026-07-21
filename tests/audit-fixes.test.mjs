@@ -87,7 +87,9 @@ test('world generation avoids ocean-dominated seeds and isolated needle peaks', 
   let needles = 0
   let localSamples = 0
   for (const seed of ['audit-a', 'audit-b', 'audit-c', 'audit-d']) {
-    const gen = new WorldGen(seed)
+    // This audit freezes the original v2 noise terrain. V3's density field and
+    // GenLayer-shaped biome topology have dedicated statistical tests.
+    const gen = new WorldGen(seed, 2)
     for (let x = -2048; x <= 2048; x += 64) for (let z = -2048; z <= 2048; z += 64) {
       const biome = gen.biomeAt(x, z)
       ocean += biome === BIOME.OCEAN ? 1 : 0
@@ -110,7 +112,9 @@ test('world generation avoids ocean-dominated seeds and isolated needle peaks', 
 })
 
 test('land caves occasionally connect their existing tunnel noise to the surface', () => {
-  const gen = new WorldGen('cave-entrance-audit')
+  // Preserve the pre-density regression fixture; recursive carvers are tested
+  // independently and again through the complete v3 population pipeline.
+  const gen = new WorldGen('cave-entrance-audit', 2)
   let entrances = 0
   for (let cx = -4; cx <= 4; cx++) for (let cz = -4; cz <= 4; cz++) {
     const chunk = new Chunk(cx, cz)

@@ -212,6 +212,11 @@ export function fortuneDropCount(base: number, level: number, random = Math.rand
   return base * (bonus + 1)
 }
 
+/** Redstone's classic Fortune rule adds one bounded roll instead of multiplying the base stack. */
+export function additiveFortuneDropCount(base: number, level: number, random = Math.random): number {
+  return level > 0 ? base + Math.floor(random() * (Math.floor(level) + 1)) : base
+}
+
 /** Classic 1.0–1.8 Sharpness: +1.25 damage per level (the 0.5+0.5·lvl curve is 1.9+). */
 export function sharpnessBonus(level: number): number {
   return level > 0 ? level * 1.25 : 0

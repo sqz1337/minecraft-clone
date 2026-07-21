@@ -5,10 +5,12 @@ import {
   B, SOLID, OPAQUE, CROSS, GRAVITY, LIGHT_LEVEL, isValidBlockId, isDirectionalBlock,
   isHorizontalFace, isWheat, wheatAge, isFarmingPlant, isWater as isWaterBlock,
   isLava as isLavaBlock, isFluid, fluidLevel, fluidKind, fluidBlock, isFlammable,
-  isLeafBlock, isBedBlock, oppositeHorizontalFace,
+  isLogBlock, isLeafBlock, isBedBlock, isDoorBlock, isDoorOpen, isDoorUpper, canSupportVine,
+  oppositeHorizontalFace,
   type HorizontalFace
 } from './Blocks'
 import { buildChunkGeoms } from './Mesher'
+import { planTree, type TreeGeneratorKind } from './BiomeDecorator'
 import type { Materials } from '../gfx/Materials'
 import type { Atlas } from '../gfx/Atlas'
 
@@ -38,6 +40,8 @@ interface ScheduledBlockTick {
 const SIMULATION_STEP = 1 / 20
 const RANDOM_TICK_INTERVAL = 20
 const MAX_TICKS_PER_FRAME = 5
+/** Natural spawning simulates the full inner eligible square even when it is not rendered. */
+const MOB_SIMULATION_RADIUS = 8
 
 const LIGHT_CELLS = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT
 const LIGHT_CHANGED = 1 << 4
@@ -66,7 +70,7 @@ function lightOpacity(id: number): number {
 /** Blocks that participate in random ticks (growth, decay, spread). */
 function wantsRandomTick(id: number): boolean {
   return isFarmingPlant(id) || id === B.FARMLAND_DRY || id === B.FARMLAND_WET ||
-    id === B.GRASS || id === B.MYCELIUM || isLeafBlock(id)
+    id === B.GRASS || id === B.MYCELIUM || id === B.CACTUS || isLeafBlock(id)
 }
 
 export class World {
@@ -99,6 +103,8 @@ export class World {
   private scheduledTicks: ScheduledBlockTick[] = []
   private scheduledTickIndex = new Map<string, ScheduledBlockTick>()
   private mutationBatchDepth = 0
+  /** Prevents one intentional two-half door mutation from deleting its partner. */
+  private doorPairMutationDepth = 0
   private dirtyChunkKeys = new Set<number>()
 
   constructor(
@@ -154,6 +160,21 @@ export class World {
   }
 
   chunkCount(): number { return this.chunks.size }
+
+  /** Synchronously materializes terrain around a saved entity before spawn-volume validation. */
+  ensureGeneratedAt(x: number, z: number, radius = 0): void {
+    const minCx = Math.floor((x - radius) / CHUNK_SIZE), maxCx = Math.floor((x + radius) / CHUNK_SIZE)
+    const minCz = Math.floor((z - radius) / CHUNK_SIZE), maxCz = Math.floor((z + radius) / CHUNK_SIZE)
+    const ensured: Chunk[] = []
+    for (let cx = minCx; cx <= maxCx; cx++) for (let cz = minCz; cz <= maxCz; cz++) {
+      const chunk = this.ensureChunk(cx, cz)
+      if (chunk.state < ChunkState.GENERATED) this.generateChunk(chunk)
+      ensured.push(chunk)
+    }
+    // A second pass pulls skylight/block-light across borders created later in the loop.
+    for (const chunk of ensured) this.rebuildChunkLighting(chunk)
+    for (const chunk of ensured) this.rebuildChunkLighting(chunk)
+  }
 
   hasUnsavedBlockEdits(): boolean { return this.editsDirty }
 
@@ -277,6 +298,93 @@ export class World {
     return isLavaBlock(this.getBlock(x, y, z))
   }
 
+  private completeDoorAt(x: number, y: number, z: number): {
+    lowerY: number
+    open: boolean
+    facing: HorizontalFace
+  } | null {
+    const id = this.getBlock(x, y, z)
+    if (!isDoorBlock(id)) return null
+    const lowerY = isDoorUpper(id) ? y - 1 : y
+    const lower = this.getBlock(x, lowerY, z)
+    const upper = this.getBlock(x, lowerY + 1, z)
+    if (!isDoorBlock(lower) || isDoorUpper(lower) || !isDoorBlock(upper) || !isDoorUpper(upper)) return null
+    const open = isDoorOpen(lower)
+    if (isDoorOpen(upper) !== open) return null
+    const facing = this.getBlockFacing(x, lowerY, z)
+    if (this.getBlockFacing(x, lowerY + 1, z) !== facing) return null
+    return { lowerY, open, facing }
+  }
+
+  /** Pathfinder-facing state query; either door half resolves the complete pair. */
+  doorState(x: number, y: number, z: number): 'open' | 'closed' | null {
+    const door = this.completeDoorAt(Math.floor(x), Math.floor(y), Math.floor(z))
+    return door ? (door.open ? 'open' : 'closed') : null
+  }
+
+  /** Places a supported, closed two-block wooden door without exposing a transient half. */
+  placeDoor(x: number, y: number, z: number, facing: HorizontalFace = 4): boolean {
+    x = Math.floor(x); y = Math.floor(y); z = Math.floor(z)
+    if (y < 1 || y + 1 >= WORLD_HEIGHT || !isHorizontalFace(facing)) return false
+    const replaceable = (id: number): boolean => id === B.AIR || CROSS[id] || isFluid(id)
+    if (!SOLID[this.getBlock(x, y - 1, z)] || !replaceable(this.getBlock(x, y, z)) ||
+      !replaceable(this.getBlock(x, y + 1, z))) return false
+
+    this.batchBlocks(() => {
+      this.doorPairMutationDepth = (this.doorPairMutationDepth ?? 0) + 1
+      try {
+        this.setBlock(x, y, z, B.WOOD_DOOR_LOWER, facing)
+        this.setBlock(x, y + 1, z, B.WOOD_DOOR_UPPER, facing)
+      } finally {
+        this.doorPairMutationDepth--
+      }
+    })
+    return this.doorState(x, y, z) === 'closed'
+  }
+
+  /** Sets both halves to the requested state while preserving their persisted facing. */
+  setDoorOpen(x: number, y: number, z: number, open: boolean): boolean {
+    x = Math.floor(x); y = Math.floor(y); z = Math.floor(z)
+    const door = this.completeDoorAt(x, y, z)
+    if (!door) return false
+    if (door.open === open) return true
+    const lowerId = open ? B.WOOD_DOOR_LOWER_OPEN : B.WOOD_DOOR_LOWER
+    const upperId = open ? B.WOOD_DOOR_UPPER_OPEN : B.WOOD_DOOR_UPPER
+    this.batchBlocks(() => {
+      this.doorPairMutationDepth = (this.doorPairMutationDepth ?? 0) + 1
+      try {
+        this.setBlock(x, door.lowerY, z, lowerId, door.facing)
+        this.setBlock(x, door.lowerY + 1, z, upperId, door.facing)
+      } finally {
+        this.doorPairMutationDepth--
+      }
+    })
+    return this.doorState(x, door.lowerY, z) === (open ? 'open' : 'closed')
+  }
+
+  openDoor(x: number, y: number, z: number): boolean {
+    return this.setDoorOpen(x, y, z, true)
+  }
+
+  /** EntityWorld-compatible destruction: either half removes the entire door. */
+  breakDoor(x: number, y: number, z: number): boolean {
+    x = Math.floor(x); y = Math.floor(y); z = Math.floor(z)
+    const id = this.getBlock(x, y, z)
+    if (!isDoorBlock(id)) return false
+    const lowerY = isDoorUpper(id) ? y - 1 : y
+    this.batchBlocks(() => {
+      this.doorPairMutationDepth = (this.doorPairMutationDepth ?? 0) + 1
+      try {
+        if (isDoorBlock(this.getBlock(x, lowerY + 1, z))) this.setBlock(x, lowerY + 1, z, B.AIR)
+        if (isDoorBlock(this.getBlock(x, lowerY, z))) this.setBlock(x, lowerY, z, B.AIR)
+      } finally {
+        this.doorPairMutationDepth--
+      }
+    })
+    this.onAutomaticBlockBreak(x, lowerY, z, B.WOOD_DOOR_LOWER)
+    return true
+  }
+
   /** Apply many block changes with one relight/remesh per touched chunk. */
   batchBlocks(action: () => void): void {
     this.mutationBatchDepth = (this.mutationBatchDepth ?? 0) + 1
@@ -360,41 +468,33 @@ export class World {
       this.setBlock(x, y, z, Math.min(B.WHEAT_7, id + amount))
       return true
     }
-    if (id === B.SAPLING_OAK || id === B.SAPLING_SPRUCE) return this.growTree(x, y, z, id === B.SAPLING_SPRUCE)
+    if (id === B.SAPLING_OAK || id === B.SAPLING_SPRUCE || id === B.SAPLING_BIRCH) {
+      return this.growTree(x, y, z, id === B.SAPLING_SPRUCE)
+    }
     return false
   }
 
   growTree(x: number, y: number, z: number, spruce = false): boolean {
     const sapling = this.getBlock(x, y, z)
-    if (sapling !== (spruce ? B.SAPLING_SPRUCE : B.SAPLING_OAK)) return false
-    const soil = this.getBlock(x, y - 1, z)
-    if (soil !== B.GRASS && soil !== B.DIRT) return false
-    const height = (spruce ? 6 : 4) + this.positionHash(x, y, z, this.simulationTick ^ 0x51f) % 3
-    if (y + height + 2 >= WORLD_HEIGHT) return false
-    for (let yy = y; yy <= y + height + 1; yy++) {
-      const radius = yy >= y + height - 2 ? 2 : 0
-      for (let dx = -radius; dx <= radius; dx++) {
-        for (let dz = -radius; dz <= radius; dz++) {
-          const id = this.getBlock(x + dx, yy, z + dz)
-          if (id !== B.AIR && id !== B.SAPLING_OAK && id !== B.SAPLING_SPRUCE && !CROSS[id]) return false
-        }
+    if (sapling !== B.SAPLING_OAK && sapling !== B.SAPLING_SPRUCE && sapling !== B.SAPLING_BIRCH) return false
+    const kind: TreeGeneratorKind = sapling === B.SAPLING_BIRCH ? 'birch'
+      : spruce || sapling === B.SAPLING_SPRUCE ? 'taiga_1' : 'small_oak'
+    const feature = planTree(
+      kind,
+      this.positionHash(x, y, z, this.simulationTick ^ 0x51f),
+      x, y, z,
+      {
+        blockAt: (bx, by, bz) => this.getBlock(bx, by, bz),
+        surfaceY: (bx, bz) => this.gen.surfaceY(bx, bz),
+        biomeAt: (bx, bz) => this.biomeAt(bx, bz)
       }
-    }
-
-    const log = spruce ? B.PINELOG : B.LOG
-    const leaves = spruce ? B.PINELEAVES : B.LEAVES
-    this.setBlock(x, y, z, log)
-    for (let yy = 1; yy < height; yy++) this.setBlock(x, y + yy, z, log)
-    for (let yy = y + height - 2; yy <= y + height + 1; yy++) {
-      const radius = yy >= y + height ? 1 : 2
-      for (let dx = -radius; dx <= radius; dx++) {
-        for (let dz = -radius; dz <= radius; dz++) {
-          if (Math.abs(dx) === radius && Math.abs(dz) === radius &&
-            this.positionHash(x + dx, yy, z + dz, this.simulationTick) % 3 === 0) continue
-          if (this.getBlock(x + dx, yy, z + dz) === B.AIR) this.setBlock(x + dx, yy, z + dz, leaves)
-        }
+    )
+    if (!feature) return false
+    this.batchBlocks(() => {
+      for (const placement of feature.placements) {
+        this.setBlock(placement.x, placement.y, placement.z, placement.block)
       }
-    }
+    })
     return true
   }
 
@@ -406,17 +506,27 @@ export class World {
     const lx = x - cx * CHUNK_SIZE, lz = z - cz * CHUNK_SIZE
     const index = Chunk.index(lx, y, lz)
     const previousId = c.get(lx, y, lz)
-    const previousFacing = this.blockFacings.get(this.key(cx, cz))?.get(index) ?? 4
+    const storedPreviousFacing = this.blockFacings.get(this.key(cx, cz))?.get(index)
+    const previousFacing = storedPreviousFacing ?? 4
     const nextFacing = isDirectionalBlock(id)
       ? (facing ?? (isDirectionalBlock(previousId) ? previousFacing : 4))
       : null
-    const facingChanged = nextFacing !== (isDirectionalBlock(previousId) ? previousFacing : null)
+    const facingChanged = nextFacing !== (isDirectionalBlock(previousId) ? previousFacing : null) ||
+      (id === B.VINE && nextFacing !== null && storedPreviousFacing === undefined)
     const blockChanged = previousId !== id
     if (!blockChanged && !facingChanged) return
 
     if (blockChanged) {
       c.set(lx, y, lz, id)
       this.recordBlockEdit(c, index, id)
+      if (isDoorBlock(previousId) && (this.doorPairMutationDepth ?? 0) === 0) {
+        const partnerY = isDoorUpper(previousId) ? y - 1 : y + 1
+        const partner = this.getBlock(x, partnerY, z)
+        if (isDoorBlock(partner) && isDoorUpper(partner) !== isDoorUpper(previousId)) {
+          this.doorPairMutationDepth = 1
+          try { this.setBlock(x, partnerY, z, B.AIR) } finally { this.doorPairMutationDepth = 0 }
+        }
+      }
       if (isFluid(id) && CROSS[previousId] && previousId !== B.FIRE) {
         this.onAutomaticBlockBreak(x, y, z, previousId)
       }
@@ -437,7 +547,7 @@ export class World {
       } else {
         c.randomTickIndices.delete(index)
       }
-      if (finalId === B.SAPLING_OAK || finalId === B.SAPLING_SPRUCE) {
+      if (finalId === B.SAPLING_OAK || finalId === B.SAPLING_SPRUCE || finalId === B.SAPLING_BIRCH) {
         const delay = 600 + this.positionHash(x, y, z, this.simulationTick) % 601
         this.scheduleBlockTick(x, y, z, delay, 1)
       }
@@ -445,7 +555,10 @@ export class World {
       if (finalId === B.FIRE) this.scheduleBlockTick(x, y, z, 8, 3)
       this.scheduleAdjacentDynamicTicks(x, y, z)
     }
-    this.recordBlockFacing(c, index, nextFacing)
+    // Vines need an explicit value even for face 4: unlike the other
+    // directional blocks, a missing entry means a generated metadata-free
+    // vine whose support must be inferred once by the mesher.
+    this.recordBlockFacing(c, index, nextFacing, id === B.VINE)
     this.refreshChangedBlock(c, lx, lz)
   }
 
@@ -467,6 +580,10 @@ export class World {
       return c.colBiome[((x - cx * CHUNK_SIZE) << 4) | (z - cz * CHUNK_SIZE)]
     }
     return this.gen.biomeAt(x, z)
+  }
+
+  isSlimeChunk(cx: number, cz: number): boolean {
+    return this.gen.isSlimeChunk(cx, cz)
   }
 
   /** Highest solid, non-decoration block in a column (or -1). */
@@ -503,7 +620,7 @@ export class World {
       }
       if (t > maxDist) return null
       const id = this.getBlock(x, y, z)
-      if (id !== B.AIR && ((includeFluids && isFluid(id)) || (SOLID[id] || CROSS[id]))) {
+      if (id !== B.AIR && ((includeFluids && isFluid(id)) || (SOLID[id] || CROSS[id] || isDoorBlock(id)))) {
         return { x, y, z, nx, ny, nz, id, dist: t }
       }
     }
@@ -518,9 +635,10 @@ export class World {
   /** Generate + mesh everything around a chunk position, yielding to the event loop. */
   async pregen(ccx: number, ccz: number, onProgress: (f: number) => void): Promise<void> {
     const r = this.renderDistance
+    const generationRadius = Math.max(r + 1, MOB_SIMULATION_RADIUS)
     const genList: [number, number][] = []
-    for (let dz = -r - 1; dz <= r + 1; dz++) {
-      for (let dx = -r - 1; dx <= r + 1; dx++) genList.push([ccx + dx, ccz + dz])
+    for (let dz = -generationRadius; dz <= generationRadius; dz++) {
+      for (let dx = -generationRadius; dx <= generationRadius; dx++) genList.push([ccx + dx, ccz + dz])
     }
     genList.sort((a, b) => (a[0] - ccx) ** 2 + (a[1] - ccz) ** 2 - ((b[0] - ccx) ** 2 + (b[1] - ccz) ** 2))
     const meshList = genList.filter(([cx, cz]) => Math.max(Math.abs(cx - ccx), Math.abs(cz - ccz)) <= r)
@@ -611,10 +729,11 @@ export class World {
 
   private rebuildQueues(ccx: number, ccz: number): void {
     const r = this.renderDistance
+    const generationRadius = Math.max(r + 1, MOB_SIMULATION_RADIUS)
     this.genQueue.length = 0
     this.meshQueue.length = 0
-    for (let dz = -r - 1; dz <= r + 1; dz++) {
-      for (let dx = -r - 1; dx <= r + 1; dx++) {
+    for (let dz = -generationRadius; dz <= generationRadius; dz++) {
+      for (let dx = -generationRadius; dx <= generationRadius; dx++) {
         const c = this.ensureChunk(ccx + dx, ccz + dz)
         const ring = Math.max(Math.abs(dx), Math.abs(dz))
         if (c.state < ChunkState.GENERATED) this.genQueue.push(c)
@@ -627,7 +746,7 @@ export class World {
     this.meshQueue.sort((a, b) => d2(b) - d2(a))
 
     // unload far chunks
-    const limit = r + 3
+    const limit = Math.max(r + 3, MOB_SIMULATION_RADIUS + 2)
     for (const [k, c] of this.chunks) {
       if (Math.abs(c.cx - ccx) > limit || Math.abs(c.cz - ccz) > limit) {
         this.disposeChunkMeshes(c)
@@ -765,7 +884,7 @@ export class World {
         this.scheduledTickIndex?.delete(this.scheduledTickKey(tick.x, tick.y, tick.z, tick.kind))
         if (tick.kind === 1) {
           const id = this.getBlock(tick.x, tick.y, tick.z)
-          if (id === B.SAPLING_OAK || id === B.SAPLING_SPRUCE) {
+          if (id === B.SAPLING_OAK || id === B.SAPLING_SPRUCE || id === B.SAPLING_BIRCH) {
             if (!this.growTree(tick.x, tick.y, tick.z, id === B.SAPLING_SPRUCE)) {
               this.scheduleBlockTick(tick.x, tick.y, tick.z, 200, 1)
             }
@@ -909,9 +1028,31 @@ export class World {
       if (below !== B.SUGARCANE && !this.canSugarCaneStay(x, y, z)) this.breakUnsupportedPlant(x, y, z, id)
     } else if (id === B.MUSHROOM_BROWN || id === B.MUSHROOM_RED) {
       if (!OPAQUE[this.getBlock(x, y - 1, z)] || this.getLightLevel(x, y, z) > 12) this.breakUnsupportedPlant(x, y, z, id)
-    } else if (id === B.SAPLING_OAK || id === B.SAPLING_SPRUCE) {
+    } else if (id === B.SAPLING_OAK || id === B.SAPLING_SPRUCE || id === B.SAPLING_BIRCH) {
       const below = this.getBlock(x, y - 1, z)
       if (below !== B.GRASS && below !== B.DIRT) this.breakUnsupportedPlant(x, y, z, id)
+    } else if (id === B.DEAD_BUSH) {
+      if (this.getBlock(x, y - 1, z) !== B.SAND) this.breakUnsupportedPlant(x, y, z, id)
+    } else if (id === B.CACTUS) {
+      const below = this.getBlock(x, y - 1, z)
+      const sideBlocked = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+        .some(([dx, dz]) => SOLID[this.getBlock(x + dx, y, z + dz)])
+      if ((below !== B.SAND && below !== B.CACTUS) || sideBlocked) this.breakUnsupportedPlant(x, y, z, id)
+    } else if (id === B.WATER_LILY) {
+      if (this.getBlock(x, y - 1, z) !== B.WATER) this.breakUnsupportedPlant(x, y, z, id)
+    } else if (id === B.VINE) {
+      const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
+      const lx = x - cx * CHUNK_SIZE, lz = z - cz * CHUNK_SIZE
+      const storedFacing = this.blockFacings.get(this.key(cx, cz))?.get(Chunk.index(lx, y, lz))
+      const supportsFace = (face: HorizontalFace): boolean => {
+        const dx = face === 0 ? 1 : face === 1 ? -1 : 0
+        const dz = face === 4 ? 1 : face === 5 ? -1 : 0
+        return canSupportVine(this.getBlock(x + dx, y, z + dz))
+      }
+      const sideSupport = storedFacing === undefined
+        ? ([0, 1, 4, 5] as const).some(supportsFace)
+        : supportsFace(storedFacing)
+      if (!sideSupport && this.getBlock(x, y + 1, z) !== B.VINE) this.breakUnsupportedPlant(x, y, z, id)
     } else if (id === B.FARMLAND_DRY || id === B.FARMLAND_WET) {
       const above = this.getBlock(x, y + 1, z)
       if (SOLID[above] && !CROSS[above]) this.setBlock(x, y, z, B.DIRT)
@@ -927,6 +1068,9 @@ export class World {
         this.setBlock(x, y, z, B.AIR)
         if (id === B.BED_HEAD) this.onAutomaticBlockBreak(x, y, z, id)
       }
+    } else if (isDoorBlock(id)) {
+      const door = this.completeDoorAt(x, y, z)
+      if (!door || !SOLID[this.getBlock(x, door.lowerY - 1, z)]) this.breakDoor(x, y, z)
     }
   }
 
@@ -1021,6 +1165,17 @@ export class World {
       }
       return
     }
+    if (id === B.CACTUS) {
+      this.validateFarmingBlock(x, y, z)
+      if (this.getBlock(x, y, z) !== B.CACTUS || this.getBlock(x, y + 1, z) === B.CACTUS || roll % 900 !== 0) return
+      let baseY = y
+      while (this.getBlock(x, baseY - 1, z) === B.CACTUS) baseY--
+      if (y - baseY + 1 >= 3 || this.getBlock(x, y + 1, z) !== B.AIR) return
+      const sideClear = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+        .every(([dx, dz]) => !SOLID[this.getBlock(x + dx, y + 1, z + dz)])
+      if (sideClear) this.setBlock(x, y + 1, z, B.CACTUS)
+      return
+    }
     if ((id === B.MUSHROOM_BROWN || id === B.MUSHROOM_RED) && roll % 28 === 0) {
       const dx = ((roll >>> 5) % 3) - 1
       const dz = ((roll >>> 9) % 3) - 1
@@ -1042,7 +1197,7 @@ export class World {
   private hasNearbyLog(x: number, y: number, z: number): boolean {
     for (let dx = -4; dx <= 4; dx++) for (let dy = -4; dy <= 4; dy++) for (let dz = -4; dz <= 4; dz++) {
       const id = this.getBlock(x + dx, y + dy, z + dz)
-      if (id === B.LOG || id === B.PINELOG || id === B.JUNGLE_LOG) return true
+      if (isLogBlock(id)) return true
     }
     return false
   }
@@ -1252,10 +1407,15 @@ export class World {
     this.editsDirty = true
   }
 
-  private recordBlockFacing(chunk: Chunk, index: number, facing: HorizontalFace | null): void {
+  private recordBlockFacing(
+    chunk: Chunk,
+    index: number,
+    facing: HorizontalFace | null,
+    storeDefault = false
+  ): void {
     const chunkKey = this.key(chunk.cx, chunk.cz)
     let facings = this.blockFacings.get(chunkKey)
-    if (facing === null || facing === 4) {
+    if (facing === null || (facing === 4 && !storeDefault)) {
       if (!facings?.delete(index)) return
       if (facings.size === 0) this.blockFacings.delete(chunkKey)
     } else {

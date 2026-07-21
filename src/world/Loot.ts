@@ -15,6 +15,7 @@ export type LootTableId =
   | 'stronghold_storage'
   | 'stronghold_library'
   | 'village_house'
+  | 'village_blacksmith'
 
 interface LootEntry {
   id: number
@@ -37,6 +38,7 @@ const TABLES: Record<LootTableId, LootTable> = {
       { id: I.WHEAT, min: 1, max: 4, weight: 10 },
       { id: I.GUNPOWDER, min: 1, max: 4, weight: 10 },
       { id: I.STRING, min: 1, max: 4, weight: 10 },
+      { id: I.SADDLE, min: 1, max: 1, weight: 10 },
       { id: I.BUCKET, min: 1, max: 1, weight: 4 },
       { id: I.APPLE, min: 1, max: 1, weight: 6 },
       { id: I.IRON_INGOT, min: 1, max: 4, weight: 8 },
@@ -87,6 +89,17 @@ const TABLES: Record<LootTableId, LootTable> = {
       { id: I.SEEDS, min: 2, max: 5, weight: 8 },
       { id: I.APPLE, min: 1, max: 2, weight: 8 },
       { id: I.IRON_INGOT, min: 1, max: 2, weight: 3 }
+    ]
+  },
+  village_blacksmith: {
+    minRolls: 3, maxRolls: 6,
+    entries: [
+      { id: I.IRON_INGOT, min: 1, max: 5, weight: 10 },
+      { id: I.GOLD_INGOT, min: 1, max: 3, weight: 5 },
+      { id: I.BREAD, min: 1, max: 3, weight: 8 },
+      { id: I.APPLE, min: 1, max: 3, weight: 8 },
+      { id: I.COAL, min: 3, max: 8, weight: 7 },
+      { id: I.DIAMOND, min: 1, max: 2, weight: 2 }
     ]
   }
 }

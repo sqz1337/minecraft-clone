@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import {
   B, BLOCKS, HOTBAR_PAGES, SOUND_CAT, CROSS, SOLID, isContainerBlock, isDirectionalBlock, tileFor,
-  isWheat, wheatAge, isFluid, isBedBlock, isLeafBlock, oppositeHorizontalFace, type HorizontalFace
+  isWheat, wheatAge, isFluid, isWater, isBedBlock, isDoorBlock, isLeafBlock, canSupportVine, oppositeHorizontalFace,
+  type HorizontalFace
 } from '../world/Blocks'
 import { ITEMS, ItemDefinition, breakInfoFor, durabilityForItem } from '../world/Items'
 import { I } from '../world/ItemIds'
@@ -20,7 +21,7 @@ import { createExtrudedItemGeometry, setExtrudedItemUv } from '../gfx/HeldItemGe
 import type { VanillaHeldItems } from '../gfx/VanillaHeldItems'
 import { ATTACK_COOLDOWN, MELEE_REACH, bowDamage, bowPower, bowPullSprite, bowVelocity, meleeDamage } from './Combat'
 import {
-  enchantmentLevel, fortuneDropCount, sharpnessBonus, shouldConsumeDurability
+  additiveFortuneDropCount, enchantmentLevel, fortuneDropCount, sharpnessBonus, shouldConsumeDurability
 } from './Enchantments'
 
 const SURVIVAL_REACH = 4.5
@@ -450,9 +451,11 @@ export class Interaction {
   private spawnBlockDrops(id: number, x: number, y: number, z: number, harvest: boolean): void {
     const spawn = (itemId: number, count = 1) => this.drops.spawn(itemId, x + 0.5, y + 0.45, z + 0.5, count)
     const held = this.selectedStack
+    const shears = harvest && held?.id === I.SHEARS
     const silkTouch = harvest && enchantmentLevel(held, 'silk_touch') > 0
     const fortune = enchantmentLevel(held, 'fortune')
-    if (silkTouch && BLOCKS[id].hasItem && id !== B.FIRE && id !== B.PRIMED_TNT) {
+    const shearsOnlyPlant = id === B.VINE || id === B.DEAD_BUSH || id === B.TALLGRASS || id === B.FERN
+    if (silkTouch && !shearsOnlyPlant && BLOCKS[id].hasItem && id !== B.FIRE && id !== B.PRIMED_TNT) {
       spawn(id)
       return
     }
@@ -465,7 +468,12 @@ export class Interaction {
       }
       return
     }
-    if (id === B.TALLGRASS) {
+    if (shears && (isLeafBlock(id) || id === B.VINE || id === B.DEAD_BUSH ||
+      id === B.TALLGRASS || id === B.FERN)) {
+      spawn(id)
+      return
+    }
+    if (id === B.TALLGRASS || id === B.FERN) {
       if (Math.random() < 0.125) spawn(I.SEEDS)
       return
     }
@@ -474,8 +482,9 @@ export class Interaction {
       return
     }
     if (isLeafBlock(id)) {
-      // jungle saplings do not exist yet; jungle leaves only rarely drop apples' worth of nothing
-      if (id !== B.JUNGLE_LEAVES && Math.random() < 0.05) spawn(id === B.LEAVES ? B.SAPLING_OAK : B.SAPLING_SPRUCE)
+      if (id === B.LEAVES && Math.random() < 0.05) spawn(B.SAPLING_OAK)
+      else if (id === B.PINELEAVES && Math.random() < 0.05) spawn(B.SAPLING_SPRUCE)
+      else if (id === B.BIRCH_LEAVES && Math.random() < 0.05) spawn(B.SAPLING_BIRCH)
       if (id === B.LEAVES && Math.random() < 0.005) spawn(I.APPLE)
       return
     }
@@ -487,16 +496,22 @@ export class Interaction {
       spawn(I.BOOK, 3)
       return
     }
-    const drop = harvest ? BLOCKS[id].dropItem : null
+    const definition = BLOCKS[id]
+    const drop = harvest ? definition.dropItem : null
     if (drop !== null) {
-      const fortuneCount = (id === B.COAL_ORE || id === B.DIAMOND_ORE)
-        ? fortuneDropCount(1, fortune)
-        : 1
+      const [minCount, maxCount] = definition.dropCount
+      const baseCount = minCount === maxCount
+        ? minCount
+        : minCount + Math.floor(Math.random() * (maxCount - minCount + 1))
+      const fortuneCount = definition.fortuneMode === 'multiplier'
+        ? fortuneDropCount(baseCount, fortune)
+        : definition.fortuneMode === 'additive'
+          ? additiveFortuneDropCount(baseCount, fortune)
+          : baseCount
       spawn(drop, fortuneCount)
       // Iron and gold drop the ore block itself; their XP comes from smelting.
-      const xp = id === B.COAL_ORE ? Math.floor(Math.random() * 3)
-        : id === B.DIAMOND_ORE ? 3 + Math.floor(Math.random() * 5)
-          : 0
+      const [minXp, maxXp] = definition.experience
+      const xp = minXp === maxXp ? minXp : minXp + Math.floor(Math.random() * (maxXp - minXp + 1))
       if (xp > 0) this.onExperience(x + 0.5, y + 0.5, z + 0.5, xp)
     }
   }
@@ -560,6 +575,13 @@ export class Interaction {
     this.swing()
   }
 
+  private finishDrinkingMilk(): void {
+    this.player.clearEffects()
+    this.replaceOneHeldItem(I.BUCKET)
+    this.audio.eat()
+    this.swing()
+  }
+
   private replaceOneHeldItem(resultId: number): void {
     if (this.mode !== 'survival') return
     const stack = this.selectedStack
@@ -575,6 +597,33 @@ export class Interaction {
       const eye = this.player.eyePos(this.rayOrigin)
       this.drops.spawn(resultId, eye.x, eye.y - 0.35, eye.z, 1)
     }
+  }
+
+  /** Applies the typed inventory-neutral result returned by EntityManager. */
+  private useEntityInteraction(entityId: string): boolean {
+    const result = this.entities.interact(entityId, this.selectedItem?.id ?? null)
+    if (!result) return false
+    const entity = this.entities.snapshotById(entityId)
+
+    if (result.type === 'saddle') {
+      if (this.mode === 'survival') this.inventory.remove(this.selected, 1)
+    } else if (result.type === 'ride') {
+      this.player.syncRidingPose(result.riding ? result.pose : null)
+    } else if (result.type === 'container') {
+      this.replaceOneHeldItem(result.replaceHeldWith)
+    } else {
+      if (entity) {
+        for (const drop of result.drops) {
+          this.drops.spawn(drop.id, entity.x, entity.y + 0.7, entity.z, drop.count)
+        }
+      }
+      if (result.damageTool) this.damageHeldItem()
+      this.audio.breakBlock('cloth')
+    }
+    this.swing()
+    this.placing = false
+    this.placeCooldown = 0.3
+    return true
   }
 
   private useStageNineItem(hit: RayHit): boolean {
@@ -745,19 +794,7 @@ export class Interaction {
     if (this.placing && this.placeCooldown <= 0) {
       if (entityIsFirst) {
         const item = this.selectedItem
-        if (item?.id === I.SHEARS) {
-          const wool = this.entities.shear(entityHit!.entity.id)
-          if (wool > 0) {
-            const entity = entityHit!.entity
-            this.drops.spawn(B.WOOL, entity.x, entity.y + 0.7, entity.z, wool)
-            this.damageHeldItem()
-            this.audio.breakBlock('cloth')
-            this.swing()
-            this.placing = false
-            this.placeCooldown = 0.3
-            return
-          }
-        }
+        if (this.useEntityInteraction(entityHit!.entity.id)) return
         if (item && this.entities.feed(entityHit!.entity.id, item.id)) {
           if (this.mode === 'survival') this.inventory.remove(this.selected, 1)
           this.swing()
@@ -774,8 +811,8 @@ export class Interaction {
       }
       // right-clicking a usable block opens it (crouch to place a block instead)
       const usable = !!hit && (hit.id === B.CRAFTING_TABLE || isContainerBlock(hit.id) ||
-        hit.id === B.ENCHANTING_TABLE || isBedBlock(hit.id))
-      if (usable && this.mode === 'survival' && !this.player.crouching) {
+        hit.id === B.ENCHANTING_TABLE || isBedBlock(hit.id) || isDoorBlock(hit.id))
+      if (usable && !this.player.crouching && (this.mode === 'survival' || isDoorBlock(hit!.id))) {
         this.placing = false
         this.onUseBlock(hit!)
         return
@@ -796,6 +833,14 @@ export class Interaction {
         this.onUseNavigation(item.id)
         this.placing = false
         this.placeCooldown = 0.3
+      } else if (item?.id === I.MILK_BUCKET && this.mode === 'survival') {
+        this.eatProgress += dt
+        this.handSwing = Math.max(this.handSwing, 0.32 + Math.sin(this.eatProgress * 18) * 0.08)
+        if (this.eatProgress >= 1.6) {
+          this.finishDrinkingMilk()
+          this.eatProgress = 0
+          this.placeCooldown = 0.24
+        }
       } else if (item?.food && this.mode === 'survival') {
         if (this.player.hunger < 20) {
           this.eatProgress += dt
@@ -818,15 +863,43 @@ export class Interaction {
         if (CROSS[hit.id]) { px = hit.x; py = hit.y; pz = hit.z }
         const cur = this.world.getBlock(px, py, pz)
         const replaceable = cur !== placeable && (cur === B.AIR || isFluid(cur) || CROSS[cur])
+        const vineFacing = placeable === B.VINE
+          ? ([
+              [1, 0, 0], [-1, 0, 1], [0, 1, 4], [0, -1, 5]
+            ] as const).find(([dx, dz]) => canSupportVine(this.world.getBlock(px + dx, py, pz + dz)))?.[2]
+          : undefined
         const plantFits = placeable === B.SUGARCANE ? this.world.canPlantSugarCane(px, py, pz)
           : placeable === B.MUSHROOM_BROWN || placeable === B.MUSHROOM_RED ? this.world.canPlantMushroom(px, py, pz)
-            : placeable === B.SAPLING_OAK || placeable === B.SAPLING_SPRUCE ? this.world.canPlantSapling(px, py, pz)
+            : placeable === B.SAPLING_OAK || placeable === B.SAPLING_SPRUCE || placeable === B.SAPLING_BIRCH
+              ? this.world.canPlantSapling(px, py, pz)
+              : placeable === B.DEAD_BUSH ? this.world.getBlock(px, py - 1, pz) === B.SAND
+                : placeable === B.CACTUS
+                  ? (this.world.getBlock(px, py - 1, pz) === B.SAND || this.world.getBlock(px, py - 1, pz) === B.CACTUS) &&
+                    [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dz]) => !SOLID[this.world.getBlock(px + dx, py, pz + dz)])
+                  : placeable === B.WATER_LILY ? this.world.getBlock(px, py - 1, pz) === B.WATER
+                    : placeable === B.VINE ? vineFacing !== undefined
               : placeable === B.RAIL ? SOLID[this.world.getBlock(px, py - 1, pz)]
               : true
         if (placeable === B.CHEST && !this.chestFits(px, py, pz)) {
           this.placeCooldown = 0.24
+        } else if (placeable === B.WOOD_DOOR_LOWER) {
+          // A door item is atomic: never fall through to generic one-block placement.
+          if (this.player.intersectsBlock(px, py, pz) || this.player.intersectsBlock(px, py + 1, pz)) {
+            this.placeCooldown = 0.24
+          } else {
+            const facing = isDirectionalBlock(placeable) ? this.facingTowardPlayer(px, pz) : undefined
+            if (!this.world.placeDoor(px, py, pz, facing)) {
+              this.placeCooldown = 0.24
+              return
+            }
+            this.audio.placeBlock(SOUND_CAT[placeable])
+            if (this.mode === 'survival') this.inventory.remove(this.selected, 1)
+            this.swing()
+            this.placeCooldown = 0.24
+          }
         } else if (replaceable && plantFits && !this.player.intersectsBlock(px, py, pz)) {
-          const facing = isDirectionalBlock(placeable) ? this.facingTowardPlayer(px, pz) : undefined
+          const facing = placeable === B.VINE ? vineFacing
+            : isDirectionalBlock(placeable) ? this.facingTowardPlayer(px, pz) : undefined
           this.world.setBlock(px, py, pz, placeable, facing)
           if (placeable === B.CHEST && facing !== undefined) this.alignChestPair(px, py, pz, facing)
           this.audio.placeBlock(SOUND_CAT[placeable])

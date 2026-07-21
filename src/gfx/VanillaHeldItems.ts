@@ -26,6 +26,15 @@ const NAME_OVERRIDES: Readonly<Record<string, string | null>> = {
   clock: 'clock_00',
   bed: null, // 26.2 uses a composite two-block model; keep the existing bed icon for now.
   emerald: null, // no extracted vanilla asset (emerald is 1.3+); the tinted sprite is used instead
+  redstone: null, // these restored legacy materials intentionally use gui/items.png cells
+  brick: null,
+  clay_ball: null,
+  lapis_lazuli: null,
+  saddle: null,
+  snowball: null,
+  milk_bucket: null,
+  raw_fish: null,
+  ink_sac: null,
   map: 'filled_map'
 }
 

@@ -137,11 +137,11 @@ export class ProjectileManager {
         projectile.shooterId ?? undefined
       )
       if (hit) {
-        this.entities.damage(
+        const accepted = this.entities.damageProjectile(
           hit.entity.id, projectile.damage, ox, oz, projectile.knockback, 0,
           projectile.shooterId ?? undefined
         )
-        if (projectile.fireSeconds > 0) this.entities.ignite(hit.entity.id, projectile.fireSeconds)
+        if (accepted && projectile.fireSeconds > 0) this.entities.ignite(hit.entity.id, projectile.fireSeconds)
         this.remove(projectile)
         return
       }

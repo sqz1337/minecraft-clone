@@ -143,6 +143,12 @@ const NON_BLOCK_ITEMS: ItemDefinition[] = [
   material(I.IRON_INGOT, 'iron_ingot', 'Iron Ingot', [7, 1]),
   material(I.GOLD_INGOT, 'gold_ingot', 'Gold Ingot', [7, 2]),
   material(I.DIAMOND, 'diamond', 'Diamond', [7, 3]),
+  material(I.REDSTONE, 'redstone', 'Redstone', [8, 3]),
+  material(I.BRICK, 'brick', 'Brick', [6, 1]),
+  material(I.CLAY_BALL, 'clay_ball', 'Clay', [9, 3]),
+  // Vanilla stores this as dye 351:4. A dedicated id preserves the blue subtype
+  // without colliding with this project's metadata-free Bone Meal item.
+  material(I.LAPIS, 'lapis_lazuli', 'Lapis Lazuli', [14, 8]),
   material(I.BOWL, 'bowl', 'Bowl', [7, 4]),
   material(I.MUSHROOM_STEW, 'mushroom_stew', 'Mushroom Stew', [8, 4], 1, {
     hunger: 6, saturation: 0.6, useSeconds: 1.6, returnsItem: I.BOWL
@@ -161,9 +167,12 @@ const NON_BLOCK_ITEMS: ItemDefinition[] = [
   material(I.FLINT, 'flint', 'Flint', [6, 0]),
   material(I.FLINT_AND_STEEL, 'flint_and_steel', 'Flint and Steel', [5, 0], 1),
   material(I.BUCKET, 'bucket', 'Bucket', [10, 4], 16),
+  material(I.SADDLE, 'saddle', 'Saddle', [8, 6], 1),
+  material(I.SNOWBALL, 'snowball', 'Snowball', [14, 0], 16),
   // full buckets never stack (vanilla) — stacking them would dupe fluids on pour
   material(I.WATER_BUCKET, 'water_bucket', 'Water Bucket', [11, 4], 1),
   material(I.LAVA_BUCKET, 'lava_bucket', 'Lava Bucket', [12, 4], 1),
+  material(I.MILK_BUCKET, 'milk_bucket', 'Milk Bucket', [13, 4], 1),
   material(I.SLIMEBALL, 'slimeball', 'Slimeball', [14, 1]),
   material(I.LEATHER, 'leather', 'Leather', [7, 6]),
   material(I.EGG, 'egg', 'Egg', [12, 0], 16),
@@ -174,6 +183,9 @@ const NON_BLOCK_ITEMS: ItemDefinition[] = [
   }),
   material(I.COOKED_PORKCHOP, 'cooked_porkchop', 'Cooked Porkchop', [8, 5], 64, {
     hunger: 8, saturation: 0.8, useSeconds: 1.6, returnsItem: null
+  }),
+  material(I.RAW_FISH, 'raw_fish', 'Raw Fish', [9, 5], 64, {
+    hunger: 2, saturation: 0.1, useSeconds: 1.6, returnsItem: null
   }),
   material(I.RAW_BEEF, 'raw_beef', 'Raw Beef', [9, 6], 64, {
     hunger: 3, saturation: 0.3, useSeconds: 1.6, returnsItem: null
@@ -197,6 +209,9 @@ const NON_BLOCK_ITEMS: ItemDefinition[] = [
     hunger: 2, saturation: 0.8, useSeconds: 1.6, returnsItem: null,
     effect: { kind: 'poison', chance: 1, seconds: 5 }
   }),
+  // Vanilla stores this as dye 351:0. Keep its classic items.png cell while
+  // the project uses metadata-free item stacks.
+  material(I.INK_SAC, 'ink_sac', 'Ink Sac', [14, 4]),
   // Emerald has no classic 1.2.4 sprite; ItemSprites paints a green diamond copy into (2,9).
   material(I.EMERALD, 'emerald', 'Emerald', [2, 9]),
   // Mutton has no classic sprite; ItemSprites paints tinted porkchop copies into (0,9)/(1,9).

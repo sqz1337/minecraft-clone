@@ -84,7 +84,43 @@ export const B = {
   BED_FOOT: 79,
   BED_HEAD: 80,
   SANDSTONE: 81,
-  END_PORTAL_FRAME: 82
+  END_PORTAL_FRAME: 82,
+  PUMPKIN: 83,
+  WOOD_DOOR_LOWER: 84,
+  WOOD_DOOR_UPPER: 85,
+  WOOD_DOOR_LOWER_OPEN: 86,
+  WOOD_DOOR_UPPER_OPEN: 87,
+  /** Monster egg: indistinguishable from stone until it is broken or awakens. */
+  INFESTED_STONE: 88,
+  INFESTED_COBBLESTONE: 89,
+  INFESTED_STONE_BRICK: 90,
+  REDSTONE_ORE: 91,
+  LAPIS_ORE: 92,
+  CLAY: 93,
+  DEAD_BUSH: 94,
+  CACTUS: 95,
+  WATER_LILY: 96,
+  VINE: 97,
+  BIRCH_LOG: 98,
+  BIRCH_LEAVES: 99,
+  SAPLING_BIRCH: 100,
+  // Wool metadata is represented as stable block ids because this engine's
+  // inventory/world format deliberately stores ids without item metadata.
+  WOOL_ORANGE: 101,
+  WOOL_MAGENTA: 102,
+  WOOL_LIGHT_BLUE: 103,
+  WOOL_YELLOW: 104,
+  WOOL_LIME: 105,
+  WOOL_PINK: 106,
+  WOOL_GRAY: 107,
+  WOOL_LIGHT_GRAY: 108,
+  WOOL_CYAN: 109,
+  WOOL_PURPLE: 110,
+  WOOL_BLUE: 111,
+  WOOL_BROWN: 112,
+  WOOL_GREEN: 113,
+  WOOL_RED: 114,
+  WOOL_BLACK: 115
 } as const
 
 export type BlockId = number
@@ -120,10 +156,26 @@ export const TILE = {
   BED_HEAD_TOP: 78, BED_FOOT_TOP: 79, BED_HEAD_END: 80, BED_HEAD_SIDE: 81,
   BED_FOOT_END: 82, BED_FOOT_SIDE: 83,
   SANDSTONE_TOP: 84, SANDSTONE_SIDE: 85, SANDSTONE_BOTTOM: 86,
-  END_FRAME_TOP: 87, END_FRAME_SIDE: 88
+  END_FRAME_TOP: 87, END_FRAME_SIDE: 88,
+  PUMPKIN_SIDE: 89, PUMPKIN_TOP: 90, PUMPKIN_FACE: 91,
+  WOOD_DOOR_LOWER: 92, WOOD_DOOR_UPPER: 93,
+  REDSTONE_ORE: 94, LAPIS_ORE: 95, CLAY: 96, DEAD_BUSH: 97,
+  CACTUS_SIDE: 98, CACTUS_TOP: 99, CACTUS_BOTTOM: 100,
+  WATER_LILY: 101, VINE: 102, BIRCH_LOG_SIDE: 103,
+  SAPLING_BIRCH: 104,
+  WOOL_ORANGE: 105, WOOL_MAGENTA: 106, WOOL_LIGHT_BLUE: 107,
+  WOOL_YELLOW: 108, WOOL_LIME: 109, WOOL_PINK: 110,
+  WOOL_GRAY: 111, WOOL_LIGHT_GRAY: 112, WOOL_CYAN: 113,
+  WOOL_PURPLE: 114, WOOL_BLUE: 115, WOOL_BROWN: 116,
+  WOOL_GREEN: 117, WOOL_RED: 118, WOOL_BLACK: 119,
+  // These species use the existing classic top/leaves cells.
+  BIRCH_LOG_TOP: 7, BIRCH_LEAVES: 8
 } as const
 
 export type SoundCategory = 'none' | 'grass' | 'dirt' | 'stone' | 'sand' | 'snow' | 'wood' | 'leaf' | 'cloth'
+export type BlockRenderShape = 'cube' | 'cross' | 'cactus' | 'lily' | 'vine'
+export type DropRange = readonly [min: number, max: number]
+export type FortuneMode = 'none' | 'multiplier' | 'additive'
 
 export interface FaceTiles {
   side: number
@@ -141,6 +193,8 @@ export interface BlockDefinition {
   readonly solid: boolean
   readonly opaque: boolean
   readonly cross: boolean
+  /** Geometry family used by the chunk mesher; collision remains described by `solid`/`cross`. */
+  readonly renderShape: BlockRenderShape
   /** Classic hardness value; break time derives from it (see Items.breakInfoFor). */
   readonly hardness: number
   /** Tool type that mines this block faster. */
@@ -151,6 +205,12 @@ export interface BlockDefinition {
   readonly miningLevel: number
   readonly sound: SoundCategory
   readonly dropItem: number | null
+  /** Inclusive base item count before Fortune is applied. */
+  readonly dropCount: DropRange
+  readonly fortuneAffected: boolean
+  readonly fortuneMode: FortuneMode
+  /** Inclusive experience-orb total emitted for a successfully harvested block. */
+  readonly experience: DropRange
   readonly hasItem: boolean
   readonly gravity: boolean
   readonly ore: boolean
@@ -163,12 +223,17 @@ interface BlockOptions {
   solid?: boolean
   opaque?: boolean
   cross?: boolean
+  renderShape?: BlockRenderShape
   hardness?: number
   tool?: ToolType
   requiresTool?: boolean
   miningLevel?: number
   sound?: SoundCategory
   dropItem?: number | null
+  dropCount?: DropRange
+  fortuneAffected?: boolean
+  fortuneMode?: FortuneMode
+  experience?: DropRange
   hasItem?: boolean
   gravity?: boolean
   ore?: boolean
@@ -192,12 +257,17 @@ function block(
     solid: options.solid ?? true,
     opaque: options.opaque ?? true,
     cross: options.cross ?? false,
+    renderShape: options.renderShape ?? (options.cross ? 'cross' : 'cube'),
     hardness: options.hardness ?? 1,
     tool: options.tool ?? null,
     requiresTool: options.requiresTool ?? false,
     miningLevel: options.miningLevel ?? 0,
     sound: options.sound ?? 'stone',
     dropItem: options.dropItem === undefined ? id : options.dropItem,
+    dropCount: options.dropCount ?? [1, 1],
+    fortuneAffected: (options.fortuneMode ?? (options.fortuneAffected ? 'multiplier' : 'none')) !== 'none',
+    fortuneMode: options.fortuneMode ?? (options.fortuneAffected ? 'multiplier' : 'none'),
+    experience: options.experience ?? [0, 0],
     hasItem: options.hasItem ?? true,
     gravity: options.gravity ?? false,
     ore: options.ore ?? false,
@@ -268,7 +338,7 @@ const DEFINITIONS: BlockDefinition[] = [
   }),
   block(B.COAL_ORE, 'coal_ore', 'Coal Ore', TILE.COAL_ORE, {
     hardness: 3, tool: 'pickaxe', requiresTool: true, sound: 'stone', ore: true,
-    dropItem: I.COAL, hotbarPage: 1, hotbarSlot: 1
+    dropItem: I.COAL, fortuneAffected: true, experience: [0, 2], hotbarPage: 1, hotbarSlot: 1
   }),
   block(B.IRON_ORE, 'iron_ore', 'Iron Ore', TILE.IRON_ORE, {
     hardness: 3, tool: 'pickaxe', requiresTool: true, miningLevel: 1, sound: 'stone', ore: true,
@@ -280,7 +350,7 @@ const DEFINITIONS: BlockDefinition[] = [
   }),
   block(B.DIAMOND_ORE, 'diamond_ore', 'Diamond Ore', TILE.DIAMOND_ORE, {
     hardness: 3, tool: 'pickaxe', requiresTool: true, miningLevel: 2, sound: 'stone', ore: true,
-    dropItem: I.DIAMOND, hotbarPage: 1, hotbarSlot: 4
+    dropItem: I.DIAMOND, fortuneAffected: true, experience: [3, 7], hotbarPage: 1, hotbarSlot: 4
   }),
   block(B.GLASS, 'glass', 'Glass', TILE.GLASS, {
     opaque: false, hardness: 0.3, sound: 'stone', dropItem: null, hotbarPage: 1, hotbarSlot: 5
@@ -346,6 +416,10 @@ const DEFINITIONS: BlockDefinition[] = [
     solid: false, opaque: false, cross: true, hardness: 0, sound: 'grass',
     hotbarPage: 3, hotbarSlot: 4
   }),
+  block(B.SAPLING_BIRCH, 'birch_sapling', 'Birch Sapling', TILE.SAPLING_BIRCH, {
+    solid: false, opaque: false, cross: true, hardness: 0, sound: 'grass',
+    hotbarPage: 5, hotbarSlot: 7
+  }),
   ...([B.WATER_1, B.WATER_2, B.WATER_3, B.WATER_4, B.WATER_5, B.WATER_6, B.WATER_7] as const)
     .map((id, index) => block(id, `water_${index + 1}`, 'Flowing Water', TILE.WATER, {
       solid: false, opaque: false, hardness: Infinity, sound: 'none', dropItem: null, hasItem: false
@@ -385,6 +459,25 @@ const DEFINITIONS: BlockDefinition[] = [
   block(B.WOOL, 'wool', 'Wool', TILE.WOOL, {
     hardness: 0.8, sound: 'cloth', hotbarPage: 4, hotbarSlot: 0
   }),
+  ...([
+    [B.WOOL_ORANGE, 'orange', 'Orange', TILE.WOOL_ORANGE],
+    [B.WOOL_MAGENTA, 'magenta', 'Magenta', TILE.WOOL_MAGENTA],
+    [B.WOOL_LIGHT_BLUE, 'light_blue', 'Light Blue', TILE.WOOL_LIGHT_BLUE],
+    [B.WOOL_YELLOW, 'yellow', 'Yellow', TILE.WOOL_YELLOW],
+    [B.WOOL_LIME, 'lime', 'Lime', TILE.WOOL_LIME],
+    [B.WOOL_PINK, 'pink', 'Pink', TILE.WOOL_PINK],
+    [B.WOOL_GRAY, 'gray', 'Gray', TILE.WOOL_GRAY],
+    [B.WOOL_LIGHT_GRAY, 'light_gray', 'Light Gray', TILE.WOOL_LIGHT_GRAY],
+    [B.WOOL_CYAN, 'cyan', 'Cyan', TILE.WOOL_CYAN],
+    [B.WOOL_PURPLE, 'purple', 'Purple', TILE.WOOL_PURPLE],
+    [B.WOOL_BLUE, 'blue', 'Blue', TILE.WOOL_BLUE],
+    [B.WOOL_BROWN, 'brown', 'Brown', TILE.WOOL_BROWN],
+    [B.WOOL_GREEN, 'green', 'Green', TILE.WOOL_GREEN],
+    [B.WOOL_RED, 'red', 'Red', TILE.WOOL_RED],
+    [B.WOOL_BLACK, 'black', 'Black', TILE.WOOL_BLACK]
+  ] as const).map(([id, key, name, tile]) => block(id, `${key}_wool`, `${name} Wool`, tile, {
+    hardness: 0.8, sound: 'cloth'
+  })),
   block(B.JUNGLE_LOG, 'jungle_log', 'Jungle Log', {
     side: TILE.JUNGLE_LOG, top: TILE.LOG_TOP, bottom: TILE.LOG_TOP
   }, { hardness: 2, tool: 'axe', sound: 'wood', hotbarPage: 4, hotbarSlot: 1 }),
@@ -439,7 +532,66 @@ const DEFINITIONS: BlockDefinition[] = [
   }, { hardness: 0.8, tool: 'pickaxe', requiresTool: true, sound: 'stone', hotbarPage: 5, hotbarSlot: 3 }),
   block(B.END_PORTAL_FRAME, 'end_portal_frame', 'End Portal Frame', {
     side: TILE.END_FRAME_SIDE, top: TILE.END_FRAME_TOP, bottom: TILE.SANDSTONE_BOTTOM
-  }, { hardness: Infinity, sound: 'stone', dropItem: null, hotbarPage: 5, hotbarSlot: 4 })
+  }, { hardness: Infinity, sound: 'stone', dropItem: null, hotbarPage: 5, hotbarSlot: 4 }),
+  block(B.PUMPKIN, 'pumpkin', 'Pumpkin', {
+    side: TILE.PUMPKIN_SIDE, top: TILE.PUMPKIN_TOP, bottom: TILE.PUMPKIN_TOP,
+    front: TILE.PUMPKIN_FACE
+  }, { hardness: 1, tool: 'axe', sound: 'wood', hotbarPage: 5, hotbarSlot: 5 }),
+  block(B.WOOD_DOOR_LOWER, 'wood_door', 'Wooden Door', TILE.WOOD_DOOR_LOWER, {
+    opaque: false, hardness: 3, tool: 'axe', sound: 'wood', hotbarPage: 5, hotbarSlot: 6
+  }),
+  block(B.WOOD_DOOR_UPPER, 'wood_door_upper', 'Wooden Door (Upper)', TILE.WOOD_DOOR_UPPER, {
+    opaque: false, hardness: 3, tool: 'axe', sound: 'wood', dropItem: B.WOOD_DOOR_LOWER, hasItem: false
+  }),
+  block(B.WOOD_DOOR_LOWER_OPEN, 'wood_door_open', 'Wooden Door (Open)', TILE.WOOD_DOOR_LOWER, {
+    solid: false, opaque: false, hardness: 3, tool: 'axe', sound: 'wood',
+    dropItem: B.WOOD_DOOR_LOWER, hasItem: false
+  }),
+  block(B.WOOD_DOOR_UPPER_OPEN, 'wood_door_upper_open', 'Wooden Door (Upper, Open)', TILE.WOOD_DOOR_UPPER, {
+    solid: false, opaque: false, hardness: 3, tool: 'axe', sound: 'wood',
+    dropItem: B.WOOD_DOOR_LOWER, hasItem: false
+  }),
+  block(B.INFESTED_STONE, 'infested_stone', 'Infested Stone', TILE.STONE, {
+    hardness: 0.75, tool: 'pickaxe', sound: 'stone', dropItem: null, hasItem: false
+  }),
+  block(B.INFESTED_COBBLESTONE, 'infested_cobblestone', 'Infested Cobblestone', TILE.COBBLESTONE, {
+    hardness: 0.75, tool: 'pickaxe', sound: 'stone', dropItem: null, hasItem: false
+  }),
+  block(B.INFESTED_STONE_BRICK, 'infested_stone_brick', 'Infested Stone Bricks', TILE.STONE_BRICK, {
+    hardness: 0.75, tool: 'pickaxe', sound: 'stone', dropItem: null, hasItem: false
+  }),
+  block(B.REDSTONE_ORE, 'redstone_ore', 'Redstone Ore', TILE.REDSTONE_ORE, {
+    hardness: 3, tool: 'pickaxe', requiresTool: true, miningLevel: 2, sound: 'stone', ore: true,
+    dropItem: I.REDSTONE, dropCount: [4, 5], fortuneMode: 'additive'
+  }),
+  block(B.LAPIS_ORE, 'lapis_ore', 'Lapis Lazuli Ore', TILE.LAPIS_ORE, {
+    hardness: 3, tool: 'pickaxe', requiresTool: true, miningLevel: 1, sound: 'stone', ore: true,
+    dropItem: I.LAPIS, dropCount: [4, 8], fortuneMode: 'multiplier'
+  }),
+  block(B.CLAY, 'clay', 'Clay', TILE.CLAY, {
+    hardness: 0.6, tool: 'shovel', sound: 'dirt', dropItem: I.CLAY_BALL, dropCount: [4, 4]
+  }),
+  block(B.DEAD_BUSH, 'dead_bush', 'Dead Bush', TILE.DEAD_BUSH, {
+    solid: false, opaque: false, cross: true, hardness: 0, sound: 'grass', dropItem: null
+  }),
+  block(B.CACTUS, 'cactus', 'Cactus', {
+    side: TILE.CACTUS_SIDE, top: TILE.CACTUS_TOP, bottom: TILE.CACTUS_BOTTOM
+  }, {
+    opaque: false, renderShape: 'cactus', hardness: 0.4, sound: 'cloth'
+  }),
+  block(B.WATER_LILY, 'water_lily', 'Lily Pad', TILE.WATER_LILY, {
+    solid: false, opaque: false, cross: true, renderShape: 'lily', hardness: 0, sound: 'grass'
+  }),
+  block(B.VINE, 'vine', 'Vines', TILE.VINE, {
+    solid: false, opaque: false, cross: true, renderShape: 'vine', hardness: 0.2,
+    sound: 'grass', dropItem: null
+  }),
+  block(B.BIRCH_LOG, 'birch_log', 'Birch Log', {
+    side: TILE.BIRCH_LOG_SIDE, top: TILE.BIRCH_LOG_TOP, bottom: TILE.BIRCH_LOG_TOP
+  }, { hardness: 2, tool: 'axe', sound: 'wood' }),
+  block(B.BIRCH_LEAVES, 'birch_leaves', 'Birch Leaves', TILE.BIRCH_LEAVES, {
+    opaque: false, hardness: 0.2, sound: 'leaf', dropItem: null
+  })
 ]
 
 const BLOCK_COUNT = Math.max(...Object.values(B)) + 1
@@ -461,10 +613,34 @@ export const NAMES: readonly string[] = BLOCKS.map(definition => definition.name
 export const SOLID: readonly boolean[] = BLOCKS.map(definition => definition.solid)
 export const OPAQUE: readonly boolean[] = BLOCKS.map(definition => definition.opaque)
 export const CROSS: readonly boolean[] = BLOCKS.map(definition => definition.cross)
+export const RENDER_SHAPE: readonly BlockRenderShape[] = BLOCKS.map(definition => definition.renderShape)
 export const SOUND_CAT: readonly SoundCategory[] = BLOCKS.map(definition => definition.sound)
 export const GRAVITY: readonly boolean[] = BLOCKS.map(definition => definition.gravity)
 export const ORE: readonly boolean[] = BLOCKS.map(definition => definition.ore)
 export const LIGHT_LEVEL: readonly number[] = BLOCKS.map(definition => definition.lightLevel)
+
+export interface BlockCollisionBox {
+  readonly minX: number; readonly minY: number; readonly minZ: number
+  readonly maxX: number; readonly maxY: number; readonly maxZ: number
+}
+
+const FULL_COLLISION_BOX: BlockCollisionBox = Object.freeze({
+  minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1
+})
+const CACTUS_COLLISION_BOX: BlockCollisionBox = Object.freeze({
+  minX: 1 / 16, minY: 0, minZ: 1 / 16,
+  maxX: 15 / 16, maxY: 1, maxZ: 15 / 16
+})
+const LILY_COLLISION_BOX: BlockCollisionBox = Object.freeze({
+  minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1 / 64, maxZ: 1
+})
+
+/** Precise local collision shape for blocks whose model is not a full cube. */
+export function blockCollisionBox(id: number): BlockCollisionBox | null {
+  if (id === B.CACTUS) return CACTUS_COLLISION_BOX
+  if (id === B.WATER_LILY) return LILY_COLLISION_BOX
+  return SOLID[id] && !CROSS[id] ? FULL_COLLISION_BOX : null
+}
 
 export const WHEAT_STAGES: readonly number[] = Object.freeze([
   B.WHEAT_0, B.WHEAT_1, B.WHEAT_2, B.WHEAT_3,
@@ -481,7 +657,8 @@ export function wheatAge(id: number): number {
 
 export function isFarmingPlant(id: number): boolean {
   return isWheat(id) || id === B.SUGARCANE || id === B.MUSHROOM_BROWN ||
-    id === B.MUSHROOM_RED || id === B.SAPLING_OAK || id === B.SAPLING_SPRUCE
+    id === B.MUSHROOM_RED || id === B.SAPLING_OAK || id === B.SAPLING_SPRUCE ||
+    id === B.SAPLING_BIRCH
 }
 
 export type FluidKind = 'water' | 'lava'
@@ -515,18 +692,87 @@ export function fluidBlock(kind: FluidKind, level: number): number {
 }
 
 export function isFlammable(id: number): boolean {
-  return id === B.LOG || id === B.PINELOG || id === B.JUNGLE_LOG || id === B.LEAVES ||
-    id === B.PINELEAVES || id === B.JUNGLE_LEAVES ||
+  return isLogBlock(id) || isLeafBlock(id) || id === B.VINE || id === B.DEAD_BUSH ||
     id === B.PLANKS || id === B.CRAFTING_TABLE || id === B.CHEST || id === B.BOOKSHELF ||
-    id === B.TNT || id === B.WOOL
+    id === B.TNT || isWoolBlock(id) || isDoorBlock(id)
+}
+
+/** Classic cloth metadata order, represented by metadata-free stable block ids. */
+export const WOOL_BLOCKS: readonly BlockId[] = Object.freeze([
+  B.WOOL,
+  B.WOOL_ORANGE, B.WOOL_MAGENTA, B.WOOL_LIGHT_BLUE, B.WOOL_YELLOW,
+  B.WOOL_LIME, B.WOOL_PINK, B.WOOL_GRAY, B.WOOL_LIGHT_GRAY,
+  B.WOOL_CYAN, B.WOOL_PURPLE, B.WOOL_BLUE, B.WOOL_BROWN,
+  B.WOOL_GREEN, B.WOOL_RED, B.WOOL_BLACK
+])
+
+/** Converts a classic wool color index (0 white .. 15 black) to its block id. */
+export function woolBlockForColor(color: number): BlockId {
+  if (!Number.isInteger(color) || color < 0 || color >= WOOL_BLOCKS.length) {
+    throw new RangeError(`Invalid wool color ${color}; expected an integer from 0 to 15`)
+  }
+  return WOOL_BLOCKS[color]
+}
+
+/** Returns the classic color index for a wool block, or null for non-wool. */
+export function woolColorForBlock(id: number): number | null {
+  const color = WOOL_BLOCKS.indexOf(id)
+  return color < 0 ? null : color
+}
+
+export function isWoolBlock(id: number): boolean {
+  return woolColorForBlock(id) !== null
+}
+
+export function isLogBlock(id: number): boolean {
+  return id === B.LOG || id === B.PINELOG || id === B.JUNGLE_LOG || id === B.BIRCH_LOG
 }
 
 export function isLeafBlock(id: number): boolean {
-  return id === B.LEAVES || id === B.PINELEAVES || id === B.JUNGLE_LEAVES
+  return id === B.LEAVES || id === B.PINELEAVES || id === B.JUNGLE_LEAVES || id === B.BIRCH_LEAVES
+}
+
+/** Vines attach only to opaque normal movement-blocking faces. */
+export function canSupportVine(id: number): boolean {
+  return !!SOLID[id] && !!OPAQUE[id] && RENDER_SHAPE[id] === 'cube' &&
+    id !== B.CHEST && !isBedBlock(id) && !isDoorBlock(id)
 }
 
 export function isBedBlock(id: number): boolean {
   return id === B.BED_FOOT || id === B.BED_HEAD
+}
+
+export function isDoorBlock(id: number): boolean {
+  return id === B.WOOD_DOOR_LOWER || id === B.WOOD_DOOR_UPPER ||
+    id === B.WOOD_DOOR_LOWER_OPEN || id === B.WOOD_DOOR_UPPER_OPEN
+}
+
+export function isDoorOpen(id: number): boolean {
+  return id === B.WOOD_DOOR_LOWER_OPEN || id === B.WOOD_DOOR_UPPER_OPEN
+}
+
+export function isDoorUpper(id: number): boolean {
+  return id === B.WOOD_DOOR_UPPER || id === B.WOOD_DOOR_UPPER_OPEN
+}
+
+/** Host blocks that a silverfish may replace with one of the persisted monster-egg variants. */
+export function isSilverfishInfestable(id: number): boolean {
+  return infestedBlockFor(id) !== null
+}
+
+/** Maps every classic 1.2.4 host block to its persisted monster-egg variant. */
+export function infestedBlockFor(id: number): BlockId | null {
+  if (id === B.STONE) return B.INFESTED_STONE
+  if (id === B.COBBLESTONE) return B.INFESTED_COBBLESTONE
+  if (id === B.STONE_BRICK || id === B.STONE_BRICK_MOSSY || id === B.STONE_BRICK_CRACKED) {
+    return B.INFESTED_STONE_BRICK
+  }
+  return null
+}
+
+export function isInfestedBlock(id: number): boolean {
+  return id === B.INFESTED_STONE || id === B.INFESTED_COBBLESTONE ||
+    id === B.INFESTED_STONE_BRICK
 }
 
 const HOTBAR_PAGE_COUNT = Math.max(...BLOCKS.map(definition => definition.hotbarPage ?? 0)) + 1
@@ -551,7 +797,7 @@ export function isContainerBlock(id: number): boolean {
 
 export function isDirectionalBlock(id: number): boolean {
   return id === B.CHEST || id === B.FURNACE || id === B.FURNACE_LIT ||
-    id === B.BED_FOOT || id === B.BED_HEAD
+    id === B.BED_FOOT || id === B.BED_HEAD || id === B.VINE || isDoorBlock(id)
 }
 
 export function isHorizontalFace(face: unknown): face is HorizontalFace {
