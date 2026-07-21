@@ -10,7 +10,7 @@ import { World } from '../world/World'
 import { WorldGen, BIOME, BIOME_NAMES, SEA_LEVEL } from '../world/WorldGen'
 import { CHUNK_SIZE } from '../world/Chunk'
 import { Player } from '../player/Player'
-import { Interaction } from '../player/Interaction'
+import { Interaction, VIEWMODEL_LAYER } from '../player/Interaction'
 import { Inventory, ItemStack, SerializedInventory, cloneStack } from '../player/Inventory'
 import { Crafting, CursorHolder, clickStackSlot, returnStacks, takeIntoCursor } from '../player/Crafting'
 import { ItemDrops } from '../world/ItemDrops'
@@ -98,6 +98,8 @@ export class Game {
   private perfNextReport = performance.now() + 2000
   private shadowUpdateTimer = 0
   private spawnerTimer = 1
+  /** Active window.setTimeout id while Q is held, pending a whole-stack drop. */
+  private dropHoldTimer: number | null = null
   private initializedStructureChests = new Set<string>()
   private initializedVillageChunks = new Set<string>()
   private initializedVillageDoorChunks = new Set<string>()
@@ -225,6 +227,9 @@ export class Game {
     )
     this.env = new Environment(this.scene, preset.shadowSize, this.settings.renderDistance * CHUNK_SIZE)
     this.env.setShadowsEnabled(preset.shadows)
+    // The held-item view-model pass renders only VIEWMODEL_LAYER; let the scene
+    // lights reach that layer too so a block held in hand is still lit.
+    for (const light of [this.env.sun, this.env.hemi, this.env.ambient]) light.layers.enable(VIEWMODEL_LAYER)
     this.particles = new Particles(this.scene, preset.particleMult)
     this.tntFx = new TntFx(this.scene)
     this.critters = new Critters(this.scene)
@@ -238,7 +243,7 @@ export class Game {
     this.experienceOrbs = new ExperienceOrbs(this.scene, this.world)
     this.entities = new EntityManager(this.world, this.scene, {
       drop: (id, x, y, z, count) => this.drops.spawn(id, x, y, z, count),
-      sound: (kind, event) => this.audio.mob(kind, event),
+      sound: (kind, event, volume) => this.audio.mob(kind, event, volume),
       damagePlayer: (amount, sourceX, sourceZ, knockback) => {
         const hit = this.player.damage(amount)
         if (hit) this.player.knockback(sourceX, sourceZ, knockback)
@@ -545,7 +550,13 @@ export class Game {
         case 'KeyQ': {
           if (e.repeat) break
           e.preventDefault()
-          this.interaction.dropSelected()
+          // Tap: drop one. Keep holding ~1.2s: dump the rest of the stack.
+          this.interaction.dropSelected(false)
+          if (this.dropHoldTimer !== null) window.clearTimeout(this.dropHoldTimer)
+          this.dropHoldTimer = window.setTimeout(() => {
+            this.dropHoldTimer = null
+            if (this.state === 'playing') this.interaction.dropSelected(true)
+          }, 1200)
           break
         }
         case 'KeyT': {
@@ -585,6 +596,13 @@ export class Game {
           this.ui.toast(this.player.noclip ? 'Ore inspection: noclip + xray ON' : 'Ore inspection OFF')
           break
         }
+      }
+    })
+    // Releasing Q before the hold fires cancels the "dump whole stack" timer.
+    document.addEventListener('keyup', (e) => {
+      if (e.code === 'KeyQ' && this.dropHoldTimer !== null) {
+        window.clearTimeout(this.dropHoldTimer)
+        this.dropHoldTimer = null
       }
     })
   }
@@ -1464,7 +1482,17 @@ export class Game {
       if (this.perfEnabled) this.perfShadowUpdates++
     }
 
+    // Main world pass excludes the view model, then a second pass clears depth
+    // and draws only the view model so the held item self-occludes yet stays on
+    // top of the world (including the block being mined and transparent water).
+    this.camera.layers.disable(VIEWMODEL_LAYER)
     this.renderer.render(this.scene, this.camera)
+    this.renderer.autoClear = false
+    this.renderer.clearDepth()
+    this.camera.layers.set(VIEWMODEL_LAYER)
+    this.renderer.render(this.scene, this.camera)
+    this.camera.layers.set(0)
+    this.renderer.autoClear = true
 
     if (this.perfEnabled) {
       const now = performance.now()

@@ -15,18 +15,29 @@ export function createExtrudedItemGeometry(size: number): THREE.BufferGeometry {
   const positions: number[] = []
   const normals: number[] = []
   const spriteUvs: number[] = []
+  const colors: number[] = []
   const indices: number[] = []
+
+  // Fixed, view-independent face shading baked as vertex colours. The item is
+  // drawn unlit, so this is what gives the extrusion a natural sense of depth:
+  // the flat faces read full-bright while the 1px side walls are dimmer, like a
+  // beveled edge — without any of the noise a rotating world light would add.
+  const FACE = 1.0
+  const SIDE_X = 0.72
+  const SIDE_Y = 0.85
 
   const quad = (
     points: readonly [Point, Point, Point, Point],
     normal: Point,
-    uvs: readonly [SpriteUv, SpriteUv, SpriteUv, SpriteUv]
+    uvs: readonly [SpriteUv, SpriteUv, SpriteUv, SpriteUv],
+    shade: number
   ): void => {
     const first = positions.length / 3
     for (let i = 0; i < 4; i++) {
       positions.push(...points[i])
       normals.push(...normal)
       spriteUvs.push(...uvs[i])
+      colors.push(shade, shade, shade)
     }
     indices.push(first, first + 1, first + 2, first, first + 2, first + 3)
   }
@@ -40,12 +51,14 @@ export function createExtrudedItemGeometry(size: number): THREE.BufferGeometry {
   quad(
     [[-half, -half, halfDepth], [half, -half, halfDepth], [half, half, halfDepth], [-half, half, halfDepth]],
     [0, 0, 1],
-    [[1, 0], [0, 0], [0, 1], [1, 1]]
+    [[1, 0], [0, 0], [0, 1], [1, 1]],
+    FACE
   )
   quad(
     [[-half, -half, -halfDepth], [-half, half, -halfDepth], [half, half, -halfDepth], [half, -half, -halfDepth]],
     [0, 0, -1],
-    [[1, 0], [1, 1], [0, 1], [0, 0]]
+    [[1, 0], [1, 1], [0, 1], [0, 0]],
+    FACE
   )
 
   // Two textured walls per pixel column/row reproduce ItemRenderer's
@@ -57,12 +70,14 @@ export function createExtrudedItemGeometry(size: number): THREE.BufferGeometry {
     quad(
       [[x0, -half, -halfDepth], [x0, -half, halfDepth], [x0, half, halfDepth], [x0, half, -halfDepth]],
       [-1, 0, 0],
-      [[u, 0], [u, 0], [u, 1], [u, 1]]
+      [[u, 0], [u, 0], [u, 1], [u, 1]],
+      SIDE_X
     )
     quad(
       [[x1, -half, halfDepth], [x1, -half, -halfDepth], [x1, half, -halfDepth], [x1, half, halfDepth]],
       [1, 0, 0],
-      [[u, 0], [u, 0], [u, 1], [u, 1]]
+      [[u, 0], [u, 0], [u, 1], [u, 1]],
+      SIDE_X
     )
 
     const y0 = -half + i * step
@@ -71,12 +86,14 @@ export function createExtrudedItemGeometry(size: number): THREE.BufferGeometry {
     quad(
       [[-half, y0, -halfDepth], [half, y0, -halfDepth], [half, y0, halfDepth], [-half, y0, halfDepth]],
       [0, -1, 0],
-      [[1, v], [0, v], [0, v], [1, v]]
+      [[1, v], [0, v], [0, v], [1, v]],
+      SIDE_Y
     )
     quad(
       [[-half, y1, halfDepth], [half, y1, halfDepth], [half, y1, -halfDepth], [-half, y1, -halfDepth]],
       [0, 1, 0],
-      [[1, v], [0, v], [0, v], [1, v]]
+      [[1, v], [0, v], [0, v], [1, v]],
+      SIDE_Y
     )
   }
 
@@ -85,6 +102,7 @@ export function createExtrudedItemGeometry(size: number): THREE.BufferGeometry {
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
   geometry.setAttribute('spriteUv', new THREE.Float32BufferAttribute(spriteUvs, 2))
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(spriteUvs, 2))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
   geometry.setIndex(indices)
   geometry.computeBoundingSphere()
   return geometry

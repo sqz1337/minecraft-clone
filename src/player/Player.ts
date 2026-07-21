@@ -22,6 +22,12 @@ const FLY = 13
 const FLY_SPRINT = 26
 const WATER_SURFACE = 0.875
 
+/** Filled height of a water cell, including the fully submerged-cell case. */
+export function waterCellHeight(id: number, aboveId: number): number {
+  if (!isWater(id)) return 0
+  return isWater(aboveId) ? 1 : WATER_SURFACE * (8 - fluidLevel(id)) / 8
+}
+
 interface CollisionHit {
   x: number; y: number; z: number
   minX: number; minY: number; minZ: number
@@ -397,8 +403,12 @@ export class Player {
     this.inWater = !this.noclip && isWater(feetBlock)
     this.inLava = !this.noclip && isLava(feetBlock)
     const eyeY = this.pos.y + (this.crouching ? EYE_CROUCH : EYE)
-    const eyeBlock = this.world.getBlock(Math.floor(this.pos.x), Math.floor(eyeY), Math.floor(this.pos.z))
-    const waterHeight = isWater(eyeBlock) ? WATER_SURFACE * (8 - fluidLevel(eyeBlock)) / 8 : 0
+    const eyeX = Math.floor(this.pos.x), eyeBlockY = Math.floor(eyeY), eyeZ = Math.floor(this.pos.z)
+    const eyeBlock = this.world.getBlock(eyeX, eyeBlockY, eyeZ)
+    // Only the uppermost water cell has the classic 7/8 surface. A water cell
+    // with more water above is completely filled; treating every cell as 7/8
+    // full made underwater fog toggle off at every integer Y boundary.
+    const waterHeight = waterCellHeight(eyeBlock, this.world.getBlock(eyeX, eyeBlockY + 1, eyeZ))
     this.headUnderwater = !this.noclip && waterHeight > 0 && (eyeY - Math.floor(eyeY)) < waterHeight
 
     if (this.inWater && !this.wasInWater && this.vel.y < -3) {
@@ -468,7 +478,9 @@ export class Player {
       let hit = this.collides(nx, this.pos.y, this.pos.z)
       if (hit) {
         nx = this.vel.x > 0 ? hit.minX - HALF - 0.001 : hit.maxX + HALF + 0.001
-        if (this.inWater && k.has('Space') && this.onGroundOrNear()) this.vel.y = Math.max(this.vel.y, 5.5)
+        if (this.inWater && k.has('Space') && (this.onGroundOrNear() || this.canClimbLedge(this.vel.x, 0))) {
+          this.vel.y = Math.max(this.vel.y, 5.5)
+        }
         this.vel.x = 0
       } else if (sneakHold && !this.collides(nx, this.pos.y - 0.1, this.pos.z)) {
         // sneaking never walks off an edge
@@ -481,7 +493,9 @@ export class Player {
       hit = this.collides(this.pos.x, this.pos.y, nz)
       if (hit) {
         nz = this.vel.z > 0 ? hit.minZ - HALF - 0.001 : hit.maxZ + HALF + 0.001
-        if (this.inWater && k.has('Space') && this.onGroundOrNear()) this.vel.y = Math.max(this.vel.y, 5.5)
+        if (this.inWater && k.has('Space') && (this.onGroundOrNear() || this.canClimbLedge(0, this.vel.z))) {
+          this.vel.y = Math.max(this.vel.y, 5.5)
+        }
         this.vel.z = 0
       } else if (sneakHold && !this.collides(this.pos.x, this.pos.y - 0.1, nz)) {
         nz = this.pos.z
@@ -670,6 +684,19 @@ export class Player {
 
   private onGroundOrNear(): boolean {
     return this.collides(this.pos.x, this.pos.y - 0.15, this.pos.z) !== null
+  }
+
+  /**
+   * Vanilla "swim up onto shore" step-out. While pushing against a wall in water,
+   * this checks whether the body, nudged into that wall and raised ~0.6, clears any
+   * solid. It's true for a single-block ledge (climbable) and false for a taller
+   * wall — so you can hop straight out of deep water onto land instead of having to
+   * sink to the bottom first before the ledge boost will fire.
+   */
+  private canClimbLedge(dx: number, dz: number): boolean {
+    const px = this.pos.x + Math.sign(dx) * (HALF + 0.05)
+    const pz = this.pos.z + Math.sign(dz) * (HALF + 0.05)
+    return this.collides(px, this.pos.y + 0.6, pz) === null
   }
 
   private tryGroundJump(): void {

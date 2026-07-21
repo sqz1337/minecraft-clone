@@ -716,30 +716,33 @@ export class World {
 
     const t0 = performance.now()
     while (performance.now() - t0 < budgetMs) {
+      let progressed = false
       const genC = this.genQueue.pop()
       if (genC) {
-        if (genC.state < ChunkState.GENERATED) {
-          if (this.generationJobs?.has(World.ck(genC.cx, genC.cz))) continue
-          if (this.generationWorker && this.pendingGeneration.size >= MAX_PENDING_GENERATION) {
-            this.genQueue.push(genC)
-            break
-          }
+        if (genC.state >= ChunkState.GENERATED || this.generationJobs?.has(World.ck(genC.cx, genC.cz))) {
+          progressed = true
+        } else if (!this.generationWorker || this.pendingGeneration.size < MAX_PENDING_GENERATION) {
           void this.generateChunkAsync(genC)
+          progressed = true
+        } else {
+          // The worker is full, but a completed chunk may still be ready to mesh.
+          this.genQueue.push(genC)
         }
-        continue
       }
+
       const meshC = this.meshQueue.pop()
       if (meshC) {
-        if (meshC.state === ChunkState.MESHED) continue
-        if (!this.neighborsGenerated(meshC)) {
-          // neighbors still pending — requeue at the far end and stop for this frame
+        if (meshC.state === ChunkState.MESHED) {
+          progressed = true
+        } else if (!this.neighborsGenerated(meshC)) {
+          // Try the next-nearest entry on the following pass/frame.
           this.meshQueue.unshift(meshC)
-          break
+        } else {
+          this.remeshChunk(meshC)
+          progressed = true
         }
-        this.remeshChunk(meshC)
-        continue
       }
-      break
+      if (!progressed) break
     }
   }
 

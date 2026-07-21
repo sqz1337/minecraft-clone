@@ -94,3 +94,28 @@ test('a changed light border still relights and remeshes its neighbor', () => {
   assert.deepEqual(relit, ['0,0', '1,0'])
   assert.deepEqual(remeshed, ['0,0', '1,0'])
 })
+
+test('streaming meshes ready chunks while the generation worker queue is full', () => {
+  const blockedGeneration = new Chunk(2, 0)
+  const readyMesh = new Chunk(0, 0)
+  readyMesh.state = ChunkState.GENERATED
+  const world = Object.create(World.prototype)
+  Object.assign(world, {
+    lastCenter: { cx: 0, cz: 0 }, queuesDirty: false,
+    genQueue: [blockedGeneration], meshQueue: [readyMesh],
+    generationWorker: {},
+    pendingGeneration: new Map([[1, {}], [2, {}]]),
+    generationJobs: new Map()
+  })
+  const remeshed = []
+  world.neighborsGenerated = () => true
+  world.remeshChunk = chunk => {
+    chunk.state = ChunkState.MESHED
+    remeshed.push(`${chunk.cx},${chunk.cz}`)
+  }
+
+  world.update(0, 0, 5)
+
+  assert.deepEqual(remeshed, ['0,0'])
+  assert.equal(world.genQueue.length, 1)
+})

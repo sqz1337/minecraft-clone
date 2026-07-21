@@ -3,6 +3,13 @@ import * as THREE from 'three'
 const TS = 16
 const GRID = 16
 const ATLAS = TS * GRID
+// Mipmapped texture atlases need room around every tile. Without a gutter,
+// minification blends neighbouring atlas cells and distant rows of blocks turn
+// into a visible grid. Eight duplicated edge pixels keep even the small mip
+// levels isolated while the public icon canvas can remain the classic 256x256.
+const MIP_GUTTER = 8
+const MIP_CELL = TS + MIP_GUTTER * 2
+const MIP_ATLAS = MIP_CELL * GRID
 const TERRAIN_URL = `${import.meta.env.BASE_URL}assets/minecraft/terrain.png`
 const CHEST_URL = `${import.meta.env.BASE_URL}assets/minecraft/item/chest.png`
 const LARGE_CHEST_URL = `${import.meta.env.BASE_URL}assets/minecraft/item/largechest.png`
@@ -153,6 +160,13 @@ function configurePixelTexture(texture: THREE.Texture): void {
   texture.generateMipmaps = false
 }
 
+function configureWorldAtlasTexture(texture: THREE.Texture): void {
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.magFilter = THREE.NearestFilter
+  texture.minFilter = THREE.LinearMipmapLinearFilter
+  texture.generateMipmaps = true
+}
+
 export class Atlas {
   colorTex!: THREE.CanvasTexture
   chestTex!: THREE.Texture
@@ -168,11 +182,12 @@ export class Atlas {
     let rect = this.uvRects[tile]
     if (!rect) {
       const col = tile % GRID, row = Math.floor(tile / GRID)
-      const inset = 0.02 / ATLAS
-      const u0 = (col * TS) / ATLAS + inset
-      const u1 = ((col + 1) * TS) / ATLAS - inset
-      const v1 = 1 - (row * TS) / ATLAS - inset
-      const v0 = 1 - ((row + 1) * TS) / ATLAS + inset
+      const x = col * MIP_CELL + MIP_GUTTER
+      const y = row * MIP_CELL + MIP_GUTTER
+      const u0 = x / MIP_ATLAS
+      const u1 = (x + TS) / MIP_ATLAS
+      const v1 = 1 - y / MIP_ATLAS
+      const v0 = 1 - (y + TS) / MIP_ATLAS
       this.uvRects[tile] = rect = [u0, v0, u1, v1]
     }
     return rect
@@ -236,8 +251,8 @@ export class Atlas {
       this.tileAvg[tile] = n > 0 ? [r / n / 255, g / n / 255, b / n / 255] : [0.5, 0.5, 0.5]
     }
 
-    this.colorTex = new THREE.CanvasTexture(this.canvas)
-    configurePixelTexture(this.colorTex)
+    this.colorTex = new THREE.CanvasTexture(this.buildMipAtlas())
+    configureWorldAtlasTexture(this.colorTex)
 
     for (const source of CRACK_SOURCES) {
       const canvas = document.createElement('canvas')
@@ -249,6 +264,33 @@ export class Atlas {
       configurePixelTexture(texture)
       this.crackTex.push(texture)
     }
+  }
+
+  /** Builds a world-only atlas whose tile edges can be safely mipmapped. */
+  private buildMipAtlas(): HTMLCanvasElement {
+    const padded = document.createElement('canvas')
+    padded.width = padded.height = MIP_ATLAS
+    const ctx = padded.getContext('2d')!
+    ctx.imageSmoothingEnabled = false
+
+    for (let tile = 0; tile < TILE_SOURCES.length; tile++) {
+      const sx = (tile % GRID) * TS, sy = Math.floor(tile / GRID) * TS
+      const dx = (tile % GRID) * MIP_CELL + MIP_GUTTER
+      const dy = Math.floor(tile / GRID) * MIP_CELL + MIP_GUTTER
+
+      ctx.drawImage(this.canvas, sx, sy, TS, TS, dx, dy, TS, TS)
+      // Extend edges and corners instead of leaving transparent/foreign pixels
+      // for the GPU's downsampling filter to pull into the tile.
+      ctx.drawImage(this.canvas, sx, sy, 1, TS, dx - MIP_GUTTER, dy, MIP_GUTTER, TS)
+      ctx.drawImage(this.canvas, sx + TS - 1, sy, 1, TS, dx + TS, dy, MIP_GUTTER, TS)
+      ctx.drawImage(this.canvas, sx, sy, TS, 1, dx, dy - MIP_GUTTER, TS, MIP_GUTTER)
+      ctx.drawImage(this.canvas, sx, sy + TS - 1, TS, 1, dx, dy + TS, TS, MIP_GUTTER)
+      ctx.drawImage(this.canvas, sx, sy, 1, 1, dx - MIP_GUTTER, dy - MIP_GUTTER, MIP_GUTTER, MIP_GUTTER)
+      ctx.drawImage(this.canvas, sx + TS - 1, sy, 1, 1, dx + TS, dy - MIP_GUTTER, MIP_GUTTER, MIP_GUTTER)
+      ctx.drawImage(this.canvas, sx, sy + TS - 1, 1, 1, dx - MIP_GUTTER, dy + TS, MIP_GUTTER, MIP_GUTTER)
+      ctx.drawImage(this.canvas, sx + TS - 1, sy + TS - 1, 1, 1, dx + TS, dy + TS, MIP_GUTTER, MIP_GUTTER)
+    }
+    return padded
   }
 
   /** Deterministic 16x16 pixel flame: solid red-orange base thinning into yellow tongues. */

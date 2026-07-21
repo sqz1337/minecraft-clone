@@ -96,8 +96,18 @@ export class UI {
   private furnaceArrow = el<HTMLDivElement>('furnace-arrow')
   private recipeToggle = el<HTMLButtonElement>('recipe-toggle')
   private recipeBook = el<HTMLDivElement>('recipe-book')
+  private recipeViewport = el<HTMLDivElement>('recipe-viewport')
+  private recipeGrid = el<HTMLDivElement>('recipe-grid')
+  private recipeScrollbar = el<HTMLDivElement>('recipe-scrollbar')
+  private recipeScrollKnob = el<HTMLDivElement>('recipe-scroll-knob')
+  private recipeScrollPx = 0
   private recipePreview = el<HTMLDivElement>('recipe-preview')
   private adminWindow = el<HTMLDivElement>('admin-window')
+  private adminViewport = el<HTMLDivElement>('admin-viewport')
+  private adminGrid = el<HTMLDivElement>('admin-grid')
+  private adminScrollbar = el<HTMLDivElement>('admin-scrollbar')
+  private adminScrollKnob = el<HTMLDivElement>('admin-scroll-knob')
+  private adminScrollPx = 0
   private recipeBookOpen = false
   private recipePreviewIndex = 0
   private inventoryCursor = el<HTMLDivElement>('inventory-cursor')
@@ -150,9 +160,12 @@ export class UI {
       }
     })
     this.recipeToggle.addEventListener('click', () => {
+      if (!this.recipeBookOpen) this.recipeScrollPx = 0
       this.recipeBookOpen = !this.recipeBookOpen
       this.renderScreen()
     })
+    this.setupRecipeScroll()
+    this.setupAdminScroll()
     this.consoleInput.addEventListener('keydown', (event) => {
       // Keep typing from leaking into the game's global key handler.
       event.stopPropagation()
@@ -454,7 +467,7 @@ export class UI {
     this.recipeBook.classList.toggle('hidden', !this.recipeBookOpen)
     this.recipePreview.classList.toggle('hidden', !this.recipeBookOpen)
     if (!this.recipeBookOpen) return
-    const grid = el<HTMLDivElement>('recipe-grid')
+    const grid = this.recipeGrid
     grid.innerHTML = ''
     const counts = new Map<number, number>()
     const stacks = [...this.inventory!.slots, ...crafting.grid]
@@ -487,8 +500,59 @@ export class UI {
       slot.addEventListener('focus', showPreview)
       grid.appendChild(slot)
     })
+    this.updateRecipeScroll()
     const selected = RECIPES[this.recipePreviewIndex]
     this.renderRecipePreview(selected, this.canCraft(selected, counts))
+  }
+
+  /** Wheel + draggable knob scrolling for the height-limited recipe list. */
+  private setupRecipeScroll(): void {
+    this.recipeViewport.addEventListener('wheel', (event) => {
+      event.preventDefault()
+      this.recipeScrollPx += Math.sign(event.deltaY) * 18
+      this.updateRecipeScroll()
+    }, { passive: false })
+
+    this.recipeScrollKnob.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      const travel = this.recipeKnobTravel()
+      if (travel <= 0) return
+      const range = this.recipeScrollRange()
+      const startY = event.clientY
+      const startPx = this.recipeScrollPx
+      const scale = this.guiScale || 1
+      const onMove = (move: MouseEvent) => {
+        const deltaLocal = (move.clientY - startY) / scale
+        this.recipeScrollPx = startPx + (deltaLocal / travel) * range
+        this.updateRecipeScroll()
+      }
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    })
+  }
+
+  private recipeScrollRange(): number {
+    return Math.max(0, this.recipeGrid.scrollHeight - this.recipeViewport.clientHeight)
+  }
+
+  private recipeKnobTravel(): number {
+    return Math.max(0, this.recipeScrollbar.clientHeight - this.recipeScrollKnob.offsetHeight)
+  }
+
+  private updateRecipeScroll(): void {
+    const range = this.recipeScrollRange()
+    this.recipeScrollPx = Math.max(0, Math.min(range, this.recipeScrollPx))
+    this.recipeGrid.style.transform = `translateY(${-this.recipeScrollPx}px)`
+    this.recipeScrollbar.classList.toggle('disabled', range <= 0)
+    this.recipeScrollbar.setAttribute('aria-valuemin', '0')
+    this.recipeScrollbar.setAttribute('aria-valuemax', `${Math.round(range)}`)
+    this.recipeScrollbar.setAttribute('aria-valuenow', `${Math.round(this.recipeScrollPx)}`)
+    const travel = this.recipeKnobTravel()
+    this.recipeScrollKnob.style.top = `${range > 0 ? (this.recipeScrollPx / range) * travel : 0}px`
   }
 
   /** Shows the exact 3x3 placement for the recipe selected in the book. */
@@ -549,7 +613,7 @@ export class UI {
 
   /** Temporary admin panel: every registered item, click to receive it. */
   private renderAdmin(): void {
-    const grid = el<HTMLDivElement>('admin-grid')
+    const grid = this.adminGrid
     grid.innerHTML = ''
     for (const item of ITEMS) {
       if (!item) continue
@@ -559,6 +623,60 @@ export class UI {
         (id, button) => this.onAdminItemClick(id, button)
       ))
     }
+    this.adminScrollPx = 0
+    this.updateAdminScroll()
+  }
+
+  /** Wheel + draggable knob scrolling for the admin item list (creative-style). */
+  private setupAdminScroll(): void {
+    this.adminViewport.addEventListener('wheel', (event) => {
+      event.preventDefault()
+      // One notch scrolls roughly one row of slots.
+      this.adminScrollPx += Math.sign(event.deltaY) * 18
+      this.updateAdminScroll()
+    }, { passive: false })
+
+    this.adminScrollKnob.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      const travel = this.adminKnobTravel()
+      if (travel <= 0) return
+      const range = this.adminScrollRange()
+      const startY = event.clientY
+      const startPx = this.adminScrollPx
+      const scale = this.guiScale || 1
+      const onMove = (move: MouseEvent) => {
+        // Mouse moves in screen pixels; the window is scaled, so undo the scale.
+        const deltaLocal = (move.clientY - startY) / scale
+        this.adminScrollPx = startPx + (deltaLocal / travel) * range
+        this.updateAdminScroll()
+      }
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    })
+  }
+
+  /** Total hidden pixels of the admin grid below the viewport. */
+  private adminScrollRange(): number {
+    return Math.max(0, this.adminGrid.scrollHeight - this.adminViewport.clientHeight)
+  }
+
+  /** Pixels the knob can travel down its track. */
+  private adminKnobTravel(): number {
+    return Math.max(0, this.adminScrollbar.clientHeight - this.adminScrollKnob.offsetHeight)
+  }
+
+  private updateAdminScroll(): void {
+    const range = this.adminScrollRange()
+    this.adminScrollPx = Math.max(0, Math.min(range, this.adminScrollPx))
+    this.adminGrid.style.transform = `translateY(${-this.adminScrollPx}px)`
+    this.adminScrollbar.classList.toggle('disabled', range <= 0)
+    const travel = this.adminKnobTravel()
+    const knobTop = range > 0 ? (this.adminScrollPx / range) * travel : 0
+    this.adminScrollKnob.style.top = `${knobTop}px`
   }
 
   /** Live furnace indicators: flame burns down, arrow fills left to right. */

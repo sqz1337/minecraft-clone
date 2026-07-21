@@ -95,6 +95,44 @@ test('swimming outranks panic, mating and temptation for passive animals', () =>
   assert.ok(snapshot.vy > 0, 'swimming task should add upward motion')
 })
 
+test('a land animal in a pond finds dry shore and climbs out', () => {
+  const world = voxelWorld()
+  for (let x = -2; x <= 2; x++) for (let z = -2; z <= 2; z++) {
+    world.setBlock(x, 1, z, B.WATER)
+  }
+  const manager = new EntityManager(world)
+  manager.spawnTimer = Number.POSITIVE_INFINITY
+  const pig = withRandom(0.5, () => manager.spawn('pig', 0.5, 1, 0.5, {
+    bypassPositionValidation: true
+  }))
+  assert.ok(pig)
+
+  withRandom(0.5, () => tick(manager, 240, context({ x: 30, y: 1, z: 30 })))
+  const escaped = manager.snapshotById(pig.id)
+  assert.equal(escaped.inWater, false)
+  assert.ok(Math.abs(escaped.x) > 2 || Math.abs(escaped.z) > 2,
+    `pig should reach the dry perimeter, stopped at ${escaped.x},${escaped.y},${escaped.z}`)
+})
+
+test('ordinary wandering does not plan through a water barrier', () => {
+  const world = voxelWorld()
+  for (let z = -40; z <= 40; z++) world.setBlock(1, 1, z, B.WATER)
+  const manager = new EntityManager(world)
+  manager.spawnTimer = Number.POSITIVE_INFINITY
+  const cow = withRandom(0.5, () => manager.spawn('cow', 0.5, 1, 0.5))
+  assert.ok(cow)
+  const state = manager.entities.get(cow.id)
+  state.goalX = 2.5
+  state.goalY = 1
+  state.goalZ = 0.5
+  state.goalTime = 5
+
+  withRandom(0.5, () => tick(manager, 80, context({ x: 30, y: 1, z: 30 })))
+  const stayedDry = manager.snapshotById(cow.id)
+  assert.equal(stayedDry.inWater, false)
+  assert.ok(stayedDry.x < 1, `wander crossed the water barrier: x=${stayedDry.x}`)
+})
+
 test('panic remembers the damage source instead of fleeing the current player', () => {
   const manager = new EntityManager(voxelWorld())
   const cow = withRandom(0.5, () => manager.spawn('cow', 0.5, 1, 0.5))

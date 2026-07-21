@@ -133,7 +133,15 @@
       <button id="recipe-toggle" class="recipe-toggle" title="Recipe book" type="button"></button>
       <div id="recipe-book" class="mc-panel recipe-book hidden">
         <div class="recipe-book-title"></div>
-        <div id="recipe-grid" class="mc-slot-grid recipe-grid"></div>
+        <div class="recipe-book-body">
+          <div id="recipe-viewport" class="recipe-viewport">
+            <div id="recipe-grid" class="mc-slot-grid recipe-grid"></div>
+          </div>
+          <div id="recipe-scrollbar" class="recipe-scrollbar" role="scrollbar"
+            aria-label="Recipe list" aria-orientation="vertical">
+            <div id="recipe-scroll-knob" class="recipe-scroll-knob"></div>
+          </div>
+        </div>
       </div>
       <div id="recipe-preview" class="mc-panel recipe-preview hidden" aria-live="polite">
         <div id="recipe-preview-name" class="recipe-preview-name"></div>
@@ -183,7 +191,14 @@
     </div>
     <div id="admin-window" class="mc-panel admin-window hidden" role="dialog" aria-label="Admin items">
       <div class="admin-title"></div>
-      <div id="admin-grid" class="mc-slot-grid admin-grid"></div>
+      <div class="admin-body">
+        <div id="admin-viewport" class="admin-viewport">
+          <div id="admin-grid" class="mc-slot-grid admin-grid"></div>
+        </div>
+        <div id="admin-scrollbar" class="admin-scrollbar">
+          <div id="admin-scroll-knob" class="admin-scroll-knob"></div>
+        </div>
+      </div>
       <div class="admin-hint"></div>
     </div>
     <div id="inventory-cursor"></div>

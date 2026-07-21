@@ -131,6 +131,7 @@ class WaterBuilder {
   private capacity: number
   private pos: Float32Array
   private nrm: Float32Array
+  private uv: Float32Array
   private top: Float32Array
   private idx: Uint32Array
   vcount = 0
@@ -140,6 +141,7 @@ class WaterBuilder {
     this.capacity = capacity
     this.pos = new Float32Array(capacity * 3)
     this.nrm = new Float32Array(capacity * 3)
+    this.uv = new Float32Array(capacity * 2)
     this.top = new Float32Array(capacity)
     this.idx = new Uint32Array((capacity * 3) >> 1)
   }
@@ -153,15 +155,17 @@ class WaterBuilder {
     this.capacity *= 2
     const pos = new Float32Array(this.capacity * 3); pos.set(this.pos); this.pos = pos
     const nrm = new Float32Array(this.capacity * 3); nrm.set(this.nrm); this.nrm = nrm
+    const uv = new Float32Array(this.capacity * 2); uv.set(this.uv); this.uv = uv
     const top = new Float32Array(this.capacity); top.set(this.top); this.top = top
     const idx = new Uint32Array((this.capacity * 3) >> 1); idx.set(this.idx); this.idx = idx
   }
 
-  vertex(x: number, y: number, z: number, nx: number, ny: number, nz: number, isTop: number): void {
+  vertex(x: number, y: number, z: number, nx: number, ny: number, nz: number, u: number, v: number, isTop: number): void {
     if (this.vcount >= this.capacity) this.grow()
-    const v3 = this.vcount * 3
+    const v3 = this.vcount * 3, v2 = this.vcount * 2
     this.pos[v3] = x; this.pos[v3 + 1] = y; this.pos[v3 + 2] = z
     this.nrm[v3] = nx; this.nrm[v3 + 1] = ny; this.nrm[v3 + 2] = nz
+    this.uv[v2] = u; this.uv[v2 + 1] = v
     this.top[this.vcount] = isTop
     this.vcount++
   }
@@ -179,6 +183,7 @@ class WaterBuilder {
     const g = new THREE.BufferGeometry()
     g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, this.vcount * 3), 3))
     g.setAttribute('normal', new THREE.BufferAttribute(this.nrm.slice(0, this.vcount * 3), 3))
+    g.setAttribute('uv', new THREE.BufferAttribute(this.uv.slice(0, this.vcount * 2), 2))
     g.setAttribute('aTop', new THREE.BufferAttribute(this.top.slice(0, this.vcount), 1))
     g.setIndex(new THREE.BufferAttribute(this.idx.slice(0, this.icount), 1))
     g.computeBoundingSphere()
@@ -308,23 +313,44 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           const above = sample(wx, y + 1, wz)
           const surface = !isWater(above)
           const topH = surface ? WATER_SURFACE * (8 - fluidLevel(id)) / 8 : 1
+          const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 0))
           if (surface && !OPAQUE[above]) {
-            // top face
-            water.vertex(wx, y + topH, wz, 0, 1, 0, 1)
-            water.vertex(wx, y + topH, wz + 1, 0, 1, 0, 1)
-            water.vertex(wx + 1, y + topH, wz, 0, 1, 0, 1)
-            water.vertex(wx + 1, y + topH, wz + 1, 0, 1, 0, 1)
+            // top face — tile the still-water texture once per block
+            water.vertex(wx, y + topH, wz, 0, 1, 0, u0, v0, 1)
+            water.vertex(wx, y + topH, wz + 1, 0, 1, 0, u0, v1, 1)
+            water.vertex(wx + 1, y + topH, wz, 0, 1, 0, u1, v0, 1)
+            water.vertex(wx + 1, y + topH, wz + 1, 0, 1, 0, u1, v1, 1)
             water.quad()
           }
-          // side + bottom faces against air
+          // side + bottom faces against air, plus lip faces down to lower flows
           for (let f = 0; f < 6; f++) {
             if (f === 2) continue
             const fd = FACES[f]
+            const uvs = fd.uv
             const nb = sample(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
-            if (isWater(nb) || OPAQUE[nb] || (nb !== B.AIR && !CROSS[nb] && !isLava(nb))) continue
+            if (isWater(nb)) {
+              // A lower neighbouring flow leaves a vertical step between the two
+              // surfaces; without this lip the ground shows through as a white
+              // slit along every flow-level change. Bottom face (down into
+              // water) is always submerged, so only bridge horizontal steps.
+              if (fd.n[1] !== 0) continue
+              const nbTop = isWater(sample(wx + fd.n[0], y + 1, wz + fd.n[2]))
+                ? 1 : WATER_SURFACE * (8 - fluidLevel(nb)) / 8
+              if (nbTop >= topH - 1e-4) continue
+              for (let ci = 0; ci < 4; ci++) {
+                const cc = fd.c[ci]
+                // aTop on both edges keeps the lip locked to the waving surfaces.
+                water.vertex(wx + cc[0], y + (cc[1] ? topH : nbTop), wz + cc[2], fd.n[0], fd.n[1], fd.n[2],
+                  uvs[ci][0] === 0 ? u0 : u1, uvs[ci][1] === 0 ? v0 : v1, 1)
+              }
+              water.quad()
+              continue
+            }
+            if (OPAQUE[nb] || (nb !== B.AIR && !CROSS[nb] && !isLava(nb))) continue
             for (let ci = 0; ci < 4; ci++) {
               const cc = fd.c[ci]
-              water.vertex(wx + cc[0], y + cc[1] * topH, wz + cc[2], fd.n[0], fd.n[1], fd.n[2], 0)
+              water.vertex(wx + cc[0], y + cc[1] * topH, wz + cc[2], fd.n[0], fd.n[1], fd.n[2],
+                uvs[ci][0] === 0 ? u0 : u1, uvs[ci][1] === 0 ? v0 : v1, 0)
             }
             water.quad()
           }
@@ -341,12 +367,23 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
             if (f === 2 && !surface) continue
             const fd = FACES[f]
             const nb = sample(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
-            if (f !== 2 && (isLava(nb) || OPAQUE[nb] || (nb !== B.AIR && !CROSS[nb] && !isWater(nb)))) continue
+            let botH = 0
+            if (f !== 2 && isLava(nb)) {
+              // Fill the vertical step down to a lower neighbouring flow so the
+              // ground never shows through between lava cells as a white slit.
+              if (fd.n[1] !== 0) continue
+              const nbTop = isLava(sample(wx + fd.n[0], y + 1, wz + fd.n[2]))
+                ? 1 : WATER_SURFACE * (8 - fluidLevel(nb)) / 8
+              if (nbTop >= topH - 1e-4) continue
+              botH = nbTop
+            } else if (f !== 2 && (OPAQUE[nb] || (nb !== B.AIR && !CROSS[nb] && !isWater(nb)))) {
+              continue
+            }
             const uvs = fd.uv
             for (let ci = 0; ci < 4; ci++) {
               const cc = fd.c[ci]
               emissive.vertex(
-                wx + cc[0], y + cc[1] * topH, wz + cc[2],
+                wx + cc[0], y + (cc[1] ? topH : botH), wz + cc[2],
                 fd.n[0], fd.n[1], fd.n[2],
                 uvs[ci][0] === 0 ? u0 : u1, uvs[ci][1] === 0 ? v0 : v1,
                 1, 0.92, 0.72, 0

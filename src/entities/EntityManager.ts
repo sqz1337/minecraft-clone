@@ -106,7 +106,7 @@ export interface EntityWorld {
 
 export interface EntityHooks {
   drop: (id: number, x: number, y: number, z: number, count: number) => void
-  sound: (kind: MobKind, event: 'ambient' | 'hurt' | 'death' | 'step' | 'egg' | 'fuse') => void
+  sound: (kind: MobKind, event: 'ambient' | 'hurt' | 'death' | 'step' | 'egg' | 'fuse', volume?: number) => void
   damagePlayer: (amount: number, sourceX: number, sourceZ: number, knockback: number) => boolean
   shootProjectile: (x: number, y: number, z: number, tx: number, ty: number, tz: number, damage: number, shooterId?: string) => void
   explosion: (x: number, y: number, z: number, radius: number) => void
@@ -1051,16 +1051,19 @@ export class EntityManager {
       entity.rangedCooldownTicks = Math.max(0, entity.rangedCooldownTicks - 1)
       entity.temptCooldownTicks = Math.max(0, entity.temptCooldownTicks - 1)
       entity.angryTime = Math.max(0, entity.angryTime - dt)
+      // Sounds attenuate over true 3D distance so a mob buried underground (same
+      // x/z, far below) is faint rather than as loud as one standing next to you.
+      const distance3d = Math.sqrt(playerDistanceSq3d)
       entity.ambientTime -= dt
       if (entity.ambientTime <= 0) {
         entity.ambientTime = 8 + Math.random() * 22
-        if (playerDistance < 24) this.emitCrowdSound(entity.kind, 'ambient')
+        if (distance3d < 24) this.emitCrowdSound(entity.kind, 'ambient', distance3d)
       }
       if (entity.kind === 'chicken' && entity.age === 0) {
         entity.eggTimer -= dt
         if (entity.eggTimer <= 0) {
           this.hooks.drop(I.EGG, entity.x, entity.y + 0.25, entity.z, 1)
-          if (playerDistance < 24) this.emitCrowdSound('chicken', 'egg')
+          if (distance3d < 24) this.emitCrowdSound('chicken', 'egg', distance3d)
           entity.eggTimer = 300 + Math.random() * 300
         }
       }
@@ -1113,7 +1116,7 @@ export class EntityManager {
         entity.stepTime -= dt
         if (entity.stepTime <= 0) {
           entity.stepTime = entity.kind === 'chicken' ? 0.24 : 0.36
-          if (playerDistance < 16) this.emitCrowdSound(entity.kind, 'step')
+          if (distance3d < 16) this.emitCrowdSound(entity.kind, 'step', distance3d)
         }
       } else {
         entity.stepTime = 0
@@ -1131,9 +1134,12 @@ export class EntityManager {
   }
 
   /** Avoids dozens of nearby animals starting the same non-critical sample at once. */
-  private emitCrowdSound(kind: MobKind, event: 'ambient' | 'step' | 'egg'): void {
+  private emitCrowdSound(kind: MobKind, event: 'ambient' | 'step' | 'egg', distance = 0): void {
     if ((this.soundGates.get(event) ?? 0) > 0) return
-    this.hooks.sound(kind, event)
+    // Fade from full volume up close to silent at the 24-block hearing edge, so
+    // distant/underground mobs are barely audible instead of ringing at full gain.
+    const volume = Math.max(0, Math.min(1, 1 - distance / 24))
+    this.hooks.sound(kind, event, volume)
     this.soundGates.set(event, event === 'ambient' ? 0.3 : event === 'egg' ? 0.18 : 0.1)
   }
 
@@ -1163,13 +1169,15 @@ export class EntityManager {
    */
   private passiveAi(entity: EntityState, context: EntityUpdateContext, dt: number): void {
     const def = PASSIVE_DEFINITIONS[entity.kind as PeacefulKind]
-    const swimming = entity.inWater || this.world.isWater(
-      Math.floor(entity.x), Math.floor(entity.y + entity.height * 0.45), Math.floor(entity.z)
-    )
-    if (swimming) entity.vy = Math.max(entity.vy, 3.2)
+    const swimming = entity.inWater || this.touchesWater(entity) ||
+      (entity.activeTask === 'swim' && !this.hasDryFooting(entity))
+    if (swimming) {
+      this.swimToShore(entity, def.speed * 0.85, dt)
+      entity.activeTask = 'swim'
+      return
+    }
 
-    const movementTask = this.passiveMovementTask(entity, context, def, dt)
-    entity.activeTask = swimming ? 'swim' : movementTask
+    entity.activeTask = this.passiveMovementTask(entity, context, def, dt)
   }
 
   /** Fixed priority: panic, mate, tempt, follow parent, grass, wander, watch, idle. */
@@ -1380,7 +1388,7 @@ export class EntityManager {
       entity.goalTime = Math.max(0, entity.goalTime - dt)
       entity.headYaw = entity.yaw
       entity.headPitch = 0
-      this.navigate(entity, entity.goalX, entity.goalY, entity.goalZ, def.speed * 0.72, dt)
+      this.navigate(entity, entity.goalX, entity.goalY, entity.goalZ, def.speed * 0.72, dt, 'none', true)
       return true
     }
     entity.goalTime = 0
@@ -1391,7 +1399,7 @@ export class EntityManager {
     entity.goalY = entity.y
     entity.goalZ = entity.z + Math.sin(angle) * distance
     entity.goalTime = 2 + Math.random() * 5
-    this.navigate(entity, entity.goalX, entity.goalY, entity.goalZ, def.speed * 0.72, dt)
+    this.navigate(entity, entity.goalX, entity.goalY, entity.goalZ, def.speed * 0.72, dt, 'none', true)
     return true
   }
 
@@ -1440,11 +1448,10 @@ export class EntityManager {
   private villagerAi(entity: EntityState, context: EntityUpdateContext, dt: number): void {
     const def = VILLAGER_DEFINITIONS.villager
     this.tryCloseVillagerDoor(entity)
-    const swimming = entity.inWater || this.world.isWater(
-      Math.floor(entity.x), Math.floor(entity.y + entity.height * 0.45), Math.floor(entity.z)
-    )
+    const swimming = entity.inWater || this.touchesWater(entity) ||
+      (entity.villagerActivity === 'swim' && !this.hasDryFooting(entity, true))
     if (swimming) {
-      entity.vy = Math.max(entity.vy, 3.2)
+      this.swimToShore(entity, def.speed * 0.85, dt, true)
       entity.villagerActivity = 'swim'
       return
     }
@@ -1716,7 +1723,7 @@ export class EntityManager {
     const arrived = Math.hypot(entity.goalX - entity.x, entity.goalZ - entity.z) < 0.7
     if (entity.goalTime > 0 && !arrived) {
       entity.goalTime = Math.max(0, entity.goalTime - dt)
-      this.navigate(entity, entity.goalX, entity.goalY, entity.goalZ, speed * 0.72, dt, 'open')
+      this.navigate(entity, entity.goalX, entity.goalY, entity.goalZ, speed * 0.72, dt, 'open', true)
       return true
     }
     entity.goalTime = 0
@@ -1730,12 +1737,20 @@ export class EntityManager {
     entity.goalY = village?.centerY ?? entity.homeY
     entity.goalZ = centerZ + Math.sin(angle) * distance
     entity.goalTime = 2 + Math.random() * 5
-    this.navigate(entity, entity.goalX, entity.goalY, entity.goalZ, speed * 0.72, dt, 'open')
+    this.navigate(entity, entity.goalX, entity.goalY, entity.goalZ, speed * 0.72, dt, 'open', true)
     return true
   }
 
   private hostileAi(entity: EntityState, context: EntityUpdateContext, dt: number): void {
     const def = HOSTILE_DEFINITIONS[entity.kind as HostileKind]
+    const swimming = entity.inWater || this.touchesWater(entity) ||
+      (entity.navPath.some(node => node.terrain === 'water') && !this.hasDryFooting(entity))
+    // Endermen keep their dedicated water-damage/teleport response. Other land
+    // hostiles use the same shore-seeking escape as animals and villagers.
+    if (swimming && entity.kind !== 'enderman') {
+      this.swimToShore(entity, def.speed * 0.9, dt)
+      return
+    }
     const playerTarget = this.playerTarget(context)
     const spiderBright = entity.kind === 'spider' && entity.panicTime <= 0 &&
       this.effectiveLight(entity.x, entity.y + 0.45, entity.z, context.skyDarkness ?? 0) >= 8
@@ -2080,14 +2095,14 @@ export class EntityManager {
     this.tryTeleport(entity, 1, tracked.target)
   }
 
-  private navigationProfile(entity: EntityState, canOpenDoors: boolean): NavProfile {
+  private navigationProfile(entity: EntityState, canOpenDoors: boolean, canSwim = true): NavProfile {
     const scale = (entity.age < 0 ? 0.58 : 1) * (entity.sizeScale ?? 1)
     return {
       width: entity.width * scale,
       height: entity.height * scale,
       maxStep: 1,
       maxFall: 3,
-      canSwim: entity.kind !== 'enderman',
+      canSwim: canSwim && entity.kind !== 'enderman',
       canOpenDoors,
       waterCost: 2,
       maxVisited: 768,
@@ -2120,6 +2135,55 @@ export class EntityManager {
     return null
   }
 
+  /**
+   * Keeps a land mob afloat while giving it a real horizontal escape target.
+   * The nearest reachable dry perimeter cell wins, so an idle animal does not
+   * tread water forever or keep following an obsolete wander goal into a lake.
+   */
+  private swimToShore(entity: EntityState, speed: number, dt: number, canOpenDoors = false): boolean {
+    if (entity.inWater || this.touchesWater(entity)) entity.vy = Math.max(entity.vy, 3.2)
+    const swimProfile = this.navigationProfile(entity, canOpenDoors, true)
+    const dryProfile = this.navigationProfile(entity, canOpenDoors, false)
+
+    let shore = entity.navGoal ? canOccupyNode(this.world, entity.navGoal, dryProfile) : null
+    if (!shore || Math.hypot(shore.x - entity.x, shore.z - entity.z) > 14) {
+      const start = nodeForPosition(entity.x, entity.y, entity.z, swimProfile)
+      const vertical = [0, 1, -1, 2, -2, 3, -3]
+      shore = null
+      for (let radius = 1; radius <= 12 && !shore; radius++) {
+        const candidates: [number, number][] = []
+        for (let offset = -radius; offset <= radius; offset++) {
+          candidates.push([start.x + offset, start.z - radius], [start.x + offset, start.z + radius])
+        }
+        for (let offset = -radius + 1; offset < radius; offset++) {
+          candidates.push([start.x - radius, start.z + offset], [start.x + radius, start.z + offset])
+        }
+        for (const [x, z] of candidates) {
+          for (const dy of vertical) {
+            const candidate = canOccupyNode(this.world, { x, y: start.y + dy, z }, dryProfile)
+            if (!candidate || !findPath(this.world, start, candidate, swimProfile)) continue
+            shore = candidate
+            break
+          }
+          if (shore) break
+        }
+      }
+      this.clearNavigation(entity)
+      if (!shore) {
+        entity.vx *= 0.8
+        entity.vz *= 0.8
+        return false
+      }
+    }
+
+    const goal = nodeCenter(shore, swimProfile)
+    entity.goalX = goal.x
+    entity.goalY = goal.y
+    entity.goalZ = goal.z
+    entity.goalTime = Math.max(entity.goalTime, 2)
+    return this.navigate(entity, goal.x, goal.y, goal.z, speed, dt, canOpenDoors ? 'open' : 'none')
+  }
+
   /** Throttled path planning + waypoint following + 20-tick stuck detection. */
   private navigate(
     entity: EntityState,
@@ -2128,9 +2192,10 @@ export class EntityManager {
     goalZ: number,
     speed: number,
     dt: number,
-    doorMode: 'none' | 'open' | 'break' = 'none'
+    doorMode: 'none' | 'open' | 'break' = 'none',
+    avoidWater = false
   ): boolean {
-    const profile = this.navigationProfile(entity, doorMode !== 'none')
+    const profile = this.navigationProfile(entity, doorMode !== 'none', !avoidWater)
     const desired = nodeForPosition(goalX, goalY, goalZ, profile)
 
     if (this.simulationTick >= entity.navProgressAt) {
@@ -2192,7 +2257,11 @@ export class EntityManager {
 
     while (next) {
       const center = nodeCenter(next, profile)
-      if (Math.hypot(center.x - entity.x, center.z - entity.z) > 0.32 || Math.abs(center.y - entity.y) > 0.65) break
+      // Swimming bodies bob around the liquid surface and can be more than half
+      // a block above the discrete water node. Horizontal arrival is sufficient
+      // there; requiring the feet Y to match leaves mobs circling waypoint one.
+      const verticalReached = next.terrain === 'water' || Math.abs(center.y - entity.y) <= 0.65
+      if (Math.hypot(center.x - entity.x, center.z - entity.z) > 0.32 || !verticalReached) break
       entity.navIndex++
       next = entity.navPath[entity.navIndex]
     }
@@ -2240,7 +2309,9 @@ export class EntityManager {
       entity.doorBreakTicks = 0
     }
     if (next.terrain === 'water') entity.vy = Math.max(entity.vy, 1.8)
-    if (waypoint.y > entity.y + 0.35 && entity.onGround) entity.vy = Math.max(entity.vy, 7.6)
+    if (waypoint.y > entity.y + 0.35 && (entity.onGround || entity.inWater)) {
+      entity.vy = Math.max(entity.vy, 7.6)
+    }
     this.steer(entity, waypoint.x, waypoint.z, speed, dt)
     return true
   }
@@ -2286,9 +2357,15 @@ export class EntityManager {
   private steer(entity: EntityState, goalX: number, goalZ: number, speed: number, dt: number): void {
     const dx = goalX - entity.x, dz = goalZ - entity.z, len = Math.hypot(dx, dz)
     if (len <= 0.25) { entity.vx *= 0.82; entity.vz *= 0.82; return }
-    this.faceToward(entity, Math.atan2(-dx, -dz), dt)
     entity.vx += (dx / len * speed - entity.vx) * clamp(dt * 4, 0, 1)
     entity.vz += (dz / len * speed - entity.vz) * clamp(dt * 4, 0, 1)
+    // Face where we are actually moving, not the raw goal. The goal direction
+    // flips sign on tiny position noise when a mob is near/milling on its target,
+    // which snapped the body left-right each tick; velocity carries momentum and
+    // is smoothed above, so heading off it is stable. Freeze the turn when nearly
+    // stopped — a near-zero velocity has no meaningful heading (vanilla behaviour).
+    const moveSpeed = Math.hypot(entity.vx, entity.vz)
+    if (moveSpeed > 0.35) this.faceToward(entity, Math.atan2(-entity.vx, -entity.vz), dt)
   }
 
   /** Arms the classic summon goal on first damage without letting repeated hits postpone it forever. */
@@ -2470,7 +2547,7 @@ export class EntityManager {
   }
 
   private physics(entity: EntityState, dt: number): void {
-    entity.inWater = this.world.isWater(Math.floor(entity.x), Math.floor(entity.y + entity.height * 0.45), Math.floor(entity.z))
+    entity.inWater = this.touchesWater(entity)
     if (entity.inWater) {
       entity.vy += 8 * dt
       entity.vx *= 0.92; entity.vz *= 0.92; entity.vy *= 0.88
@@ -2495,6 +2572,23 @@ export class EntityManager {
     } else {
       entity.fallPeakY = Math.max(entity.fallPeakY ?? entity.y, entity.y)
     }
+  }
+
+  /** Water contact stays true until the feet actually clear the liquid cell. */
+  private touchesWater(entity: EntityState): boolean {
+    const x = Math.floor(entity.x), z = Math.floor(entity.z)
+    const bottom = Math.floor(entity.y + 0.05)
+    const top = Math.floor(entity.y + entity.height * 0.9)
+    for (let y = bottom; y <= top; y++) {
+      if (this.world.isWater(x, y, z)) return true
+    }
+    return false
+  }
+
+  /** A surfacing mob keeps its shore route until its feet occupy a supported dry node. */
+  private hasDryFooting(entity: EntityState, canOpenDoors = false): boolean {
+    const profile = this.navigationProfile(entity, canOpenDoors, false)
+    return canOccupyNode(this.world, nodeForPosition(entity.x, entity.y, entity.z, profile), profile) !== null
   }
 
   /** Vanilla: mobs take (fall height − 3) damage on landing; chickens glide and are exempt. */

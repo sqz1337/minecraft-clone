@@ -20,7 +20,7 @@ export class Materials {
   chest: THREE.MeshLambertMaterial
   largeChest: THREE.MeshLambertMaterial
   xrayOre: THREE.MeshBasicMaterial
-  water: THREE.ShaderMaterial
+  water: THREE.MeshLambertMaterial
 
   constructor(atlas: Atlas) {
     // Lambert everywhere: AO, sky/block light and tinting are already baked
@@ -92,89 +92,36 @@ export class Materials {
       toneMapped: false
     })
 
-    this.water = new THREE.ShaderMaterial({
+    // Classic vanilla-style water: the semi-transparent blue still-water tile
+    // from terrain.png, lit and fogged through the same built-in pipeline as the
+    // terrain (so it matches sun/night/fog exactly). A gentle vertex wave on the
+    // surface keeps it alive; the texture itself carries the animated look.
+    this.water = new THREE.MeshLambertMaterial({
+      map: atlas.colorTex,
       transparent: true,
       depthWrite: false,
-      side: THREE.DoubleSide,
-      uniforms: {
-        uTime: U.uTime,
-        uSunDir: U.uSunDir,
-        uSunColor: U.uSunColor,
-        uHorizon: U.uHorizon,
-        uZenith: U.uZenith,
-        uFogColor: U.uFogColor,
-        uFogDensity: U.uFogDensity,
-        uCamPos: U.uCamPos,
-        uNight: U.uNight,
-        uFlash: U.uFlash
-      },
-      vertexShader: /* glsl */`
-        attribute float aTop;
-        varying vec3 vWorld;
-        varying vec3 vNormal;
-        varying float vTop;
-        uniform float uTime;
-        void main() {
-          vec4 w = modelMatrix * vec4(position, 1.0);
-          if (aTop > 0.5) {
-            w.y += sin(w.x * 0.9 + uTime * 1.3) * 0.035
-                 + sin(w.z * 1.24 + uTime * 1.7) * 0.03
-                 + sin((w.x + w.z) * 0.5 + uTime * 0.8) * 0.03;
-          }
-          vWorld = w.xyz;
-          vNormal = normal;
-          vTop = aTop;
-          gl_Position = projectionMatrix * viewMatrix * w;
-        }
-      `,
-      fragmentShader: /* glsl */`
-        precision highp float;
-        varying vec3 vWorld;
-        varying vec3 vNormal;
-        varying float vTop;
-        uniform float uTime, uFogDensity, uNight, uFlash;
-        uniform vec3 uSunDir, uSunColor, uHorizon, uZenith, uFogColor, uCamPos;
-        void main() {
-          vec3 V = normalize(uCamPos - vWorld);
-          vec3 N;
-          if (vTop > 0.5) {
-            // analytic derivatives of the vertex waves plus finer ripples
-            float dx = 0.9 * cos(vWorld.x * 0.9 + uTime * 1.3) * 0.035
-                     + 0.5 * cos((vWorld.x + vWorld.z) * 0.5 + uTime * 0.8) * 0.03
-                     + sin(vWorld.z * 2.7 + uTime * 2.4) * 0.014
-                     + sin(vWorld.x * 5.3 - uTime * 3.1) * 0.008;
-            float dz = 1.24 * cos(vWorld.z * 1.24 + uTime * 1.7) * 0.03
-                     + 0.5 * cos((vWorld.x + vWorld.z) * 0.5 + uTime * 0.8) * 0.03
-                     + sin(vWorld.x * 2.3 - uTime * 2.2) * 0.014
-                     + sin(vWorld.z * 4.7 + uTime * 2.9) * 0.008;
-            N = normalize(vec3(-dx * 5.0, 1.0, -dz * 5.0));
-          } else {
-            N = normalize(vNormal);
-            if (dot(N, V) < 0.0) N = -N;
-          }
-          float fres = 0.05 + 0.95 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
-          vec3 deep = vec3(0.015, 0.08, 0.14);
-          vec3 shallow = vec3(0.06, 0.32, 0.36);
-          vec3 base = mix(deep, shallow, pow(max(dot(N, V), 0.0), 1.4));
-          vec3 skyRef = mix(uHorizon, uZenith, 0.35 + 0.65 * max(N.y, 0.0));
-          vec3 col = mix(base, skyRef * 0.9, fres);
-          vec3 H = normalize(V + normalize(uSunDir));
-          float sunUp = smoothstep(-0.05, 0.12, uSunDir.y);
-          float spec = pow(max(dot(N, H), 0.0), 240.0) * 2.2 * sunUp;
-          spec += pow(max(dot(N, H), 0.0), 32.0) * 0.12 * sunUp;
-          col += uSunColor * spec;
-          col *= 1.0 - uNight * 0.72;
-          col += vec3(0.35, 0.38, 0.45) * uFlash;
-          float dist = length(uCamPos - vWorld);
-          float fogF = clamp(exp(-pow(dist * uFogDensity, 2.0)), 0.0, 1.0);
-          // gentle filmic rolloff to sit well with the ACES-toned terrain
-          col = 1.0 - exp(-col * 1.7);
-          col = mix(uFogColor, col, fogF);
-          float alpha = clamp(0.66 + fres * 0.3, 0.0, 0.95);
-          gl_FragColor = vec4(col, alpha);
-        }
-      `
+      side: THREE.DoubleSide
     })
+    this.injectWaterWave(this.water)
+  }
+
+  /** Undulates the water surface (aTop vertices) in world space, seamless across chunks. */
+  private injectWaterWave(mat: THREE.Material): void {
+    mat.onBeforeCompile = (shader: { uniforms: Record<string, unknown>, vertexShader: string }) => {
+      shader.uniforms.uWaterTime = U.uTime
+      shader.vertexShader =
+        'attribute float aTop;\nuniform float uWaterTime;\n' +
+        shader.vertexShader.replace('#include <begin_vertex>', /* glsl */`
+          #include <begin_vertex>
+          if (aTop > 0.5) {
+            vec3 wp = (modelMatrix * vec4(transformed, 1.0)).xyz;
+            transformed.y += sin(wp.x * 0.9 + uWaterTime * 1.3) * 0.045
+                           + sin(wp.z * 1.24 + uWaterTime * 1.7) * 0.04
+                           + sin((wp.x + wp.z) * 0.5 + uWaterTime * 0.8) * 0.035;
+          }
+        `)
+    }
+    mat.customProgramCacheKey = () => 'water-wave-v2'
   }
 
   setXray(enabled: boolean): void {

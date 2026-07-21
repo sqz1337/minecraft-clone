@@ -152,7 +152,13 @@ export class AudioMan {
     }
   }
 
-  /** Crossfades the sample tail into its head so the short classic clip loops without a silent seam. */
+  /**
+   * Crossfades the sample tail into its head so the short classic clip loops
+   * without a seam. Rain is essentially decorrelated noise, so a linear
+   * crossfade drops ~3 dB of power at its midpoint (the two halves add in power,
+   * not amplitude) — which is audible as the rain briefly dipping every loop.
+   * An equal-power (cos/sin) crossfade keeps loudness constant across the seam.
+   */
   private makeSeamlessRainLoop(source: AudioBuffer): AudioBuffer {
     if (!this.ctx || source.length < 4) return source
     const fadeFrames = Math.min(Math.floor(source.sampleRate * 0.35), Math.floor(source.length / 4))
@@ -164,7 +170,9 @@ export class AudioMan {
       const data = output.getChannelData(channel)
       for (let i = 0; i < fadeFrames; i++) {
         const mix = i / (fadeFrames - 1)
-        data[i] = input[source.length - fadeFrames + i] * (1 - mix) + input[i] * mix
+        const fadeOut = Math.cos(mix * Math.PI * 0.5)
+        const fadeIn = Math.sin(mix * Math.PI * 0.5)
+        data[i] = input[source.length - fadeFrames + i] * fadeOut + input[i] * fadeIn
       }
       data.set(input.subarray(fadeFrames, outputLength), fadeFrames)
     }
@@ -294,13 +302,15 @@ export class AudioMan {
     this.sample('random/orb.ogg', 0.28, 0.9 + Math.random() * 0.45)
   }
 
-  mob(kind: MobKind, event: MobEvent): void {
+  mob(kind: MobKind, event: MobEvent, volume = 1): void {
     const gain = event === 'step' ? 0.07
       : event === 'ambient' ? 0.3
         : event === 'egg' ? 0.22
           : event === 'death' ? 0.52 : 0.42
+    const scaled = gain * Math.max(0, Math.min(1, volume))
+    if (scaled <= 0.001) return
     const pitch = 0.92 + Math.random() * 0.16
-    this.sample(MOB_SOUNDS[kind][event], gain, pitch)
+    this.sample(MOB_SOUNDS[kind][event], scaled, pitch)
   }
 
   updateAmbience(dt: number, opts: { wind: number; rain: number; night: number; underwater: boolean; clear: boolean }): void {

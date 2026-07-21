@@ -28,6 +28,14 @@ const SURVIVAL_REACH = 4.5
 const CREATIVE_REACH = 5.5
 type HandKind = 'block' | 'tool' | 'bow' | 'item'
 
+/**
+ * Layer used exclusively by the first-person view model. The main render pass
+ * omits this layer; a second pass clears the depth buffer and draws only this
+ * layer, so the held item self-occludes correctly yet always sits on top of the
+ * world (even the block being mined). Game enables it on the scene lights too.
+ */
+export const VIEWMODEL_LAYER = 1
+
 export class Interaction {
   selected = 0
   page = 0
@@ -103,16 +111,23 @@ export class Interaction {
     this.audio = audio
     this.particles = particles
 
+    // Block-breaking overlay. The tiny 0.008 shell + weak polygon offset used to
+    // z-fight the block face on GPUs with a low-precision depth buffer (the huge
+    // 0.1..1600 near/far range leaves little resolution), so parts of the crack
+    // flickered in and out. A clearly larger shell, a stronger camera-ward
+    // polygon offset, and DoubleSide (no back-face cull flip at grazing edges)
+    // make the overlay win the depth test decisively at every angle.
     this.crackMat = new THREE.MeshBasicMaterial({
       map: atlas.crackTex[0],
       transparent: true,
       depthWrite: false,
+      side: THREE.DoubleSide,
       polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -4,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -8,
       alphaTest: 0.02
     })
-    this.crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.008, 1.008, 1.008), this.crackMat)
+    this.crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.02, 1.02, 1.02), this.crackMat)
     this.crackMesh.visible = false
     this.crackMesh.renderOrder = 3
     scene.add(this.crackMesh)
@@ -231,7 +246,8 @@ export class Interaction {
   }
 
   /** Throws the complete selected stack forward as one item entity. */
-  dropSelected(): void {
+  /** Tap drops a single item; `all` (a held Q) throws the whole selected stack. */
+  dropSelected(all = false): void {
     const item = this.selectedItem
     if (!item) return
     let count = 1
@@ -240,7 +256,7 @@ export class Interaction {
     if (this.mode === 'survival') {
       const stack = this.selectedStack
       if (!stack) return
-      count = stack.count
+      count = all ? stack.count : 1
       damage = stack.damage
       enchantments = stack.enchantments?.map(enchantment => ({ ...enchantment }))
       this.inventory.remove(this.selected, count)
@@ -275,7 +291,7 @@ export class Interaction {
     this.handFlat = this.handKind !== 'block'
     this.handBowStage = -1
     let geo: THREE.BufferGeometry
-    let mat: THREE.MeshLambertMaterial
+    let mat: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial
     if (item.sprite) {
       const size = this.handKind === 'item' ? 0.28 : this.handKind === 'bow' ? 0.7 : 0.7
       const vanilla = this.heldItems.get(id)
@@ -283,16 +299,23 @@ export class Interaction {
       // Official standalone PNGs are not mirrored. Reversing the geometry's
       // legacy U mapping puts axe heads and blades on the vanilla side.
       setExtrudedItemUv(geo, vanilla ? [1, 0, 0, 1] : this.sprites.uvRect(item.sprite[0], item.sprite[1]))
-      mat = new THREE.MeshLambertMaterial({
+      // Flat extruded items render unlit: MeshLambert would shade each 1px edge
+      // wall of the extrusion by the world sun, and because the model rotates
+      // with the camera that produced a noisy, pixelated blade. Instead the
+      // geometry bakes fixed face shading into vertex colours (flat faces bright,
+      // side walls dim) for a stable, natural sense of depth.
+      mat = new THREE.MeshBasicMaterial({
         map: vanilla?.texture ?? this.sprites.texture,
-        alphaTest: 0.1
+        alphaTest: 0.1,
+        vertexColors: true
       })
     } else if (this.handFlat) {
       geo = createExtrudedItemGeometry(0.31)
       setExtrudedItemUv(geo, this.atlas.uvRect(tileFor(id, 0)))
-      mat = new THREE.MeshLambertMaterial({
+      mat = new THREE.MeshBasicMaterial({
         map: this.atlas.colorTex,
-        alphaTest: 0.1
+        alphaTest: 0.1,
+        vertexColors: true
       })
     } else {
       geo = new THREE.BoxGeometry(0.31, 0.31, 0.31)
@@ -318,16 +341,26 @@ export class Interaction {
       })
     }
     if (this.selectedStack?.enchantments?.length) {
-      mat.emissive = new THREE.Color(0x5b2c83)
-      mat.emissiveIntensity = 0.32
+      if (mat instanceof THREE.MeshLambertMaterial) {
+        mat.emissive = new THREE.Color(0x5b2c83)
+        mat.emissiveIntensity = 0.32
+      } else {
+        // Unlit items can't glow via emissive; a subtle violet tint keeps the cue.
+        mat.color = new THREE.Color(0xe0c8ff)
+      }
     }
-    // First-person models are a view overlay. They must not be rejected by
-    // terrain depth when the camera is pressed against a wall.
-    mat.depthTest = false
-    mat.depthWrite = false
+    // The view model is drawn in its own pass (see VIEWMODEL_LAYER) against a
+    // freshly cleared depth buffer, so it needs real depth testing to self-
+    // occlude — front faces must hide the back/side faces instead of painting
+    // over them — while still sitting on top of the world, including the block
+    // being mined and transparent water. fog:false keeps the near overlay at
+    // true colour through rain/storm haze.
+    mat.depthTest = true
+    mat.depthWrite = true
+    mat.fog = false
     this.hand = new THREE.Mesh(geo, mat)
     this.hand.frustumCulled = false
-    this.hand.renderOrder = 5
+    this.hand.layers.set(VIEWMODEL_LAYER)
     this.applyHandPose(0)
     this.updateBowVisual()
     this.camera.add(this.hand)
@@ -340,7 +373,7 @@ export class Interaction {
     const stage = column - 5
     if (stage === this.handBowStage) return
     this.handBowStage = stage
-    ;(this.hand.material as THREE.MeshLambertMaterial).map = this.heldItems.bow(stage).texture
+    ;(this.hand.material as THREE.MeshBasicMaterial).map = this.heldItems.bow(stage).texture
   }
 
   private applyHandPose(swingProgress: number): void {

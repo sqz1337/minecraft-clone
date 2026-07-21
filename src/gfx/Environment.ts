@@ -70,6 +70,10 @@ export class Environment {
     this.sun.shadow.camera.far = 640
     this.sun.shadow.bias = -0.0004
     this.sun.shadow.normalBias = 0.6
+    // Voxel skylight and corner AO are already baked into terrain vertex
+    // colors. A fully opaque realtime shadow multiplies that darkness again,
+    // crushing obsidian and shaded logs almost to black.
+    this.sun.shadow.intensity = 0.68
     scene.add(this.sun)
     scene.add(this.sun.target)
 

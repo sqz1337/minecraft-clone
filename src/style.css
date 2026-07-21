@@ -502,6 +502,33 @@ select option { background: #0d1420; }
   padding: 5px;
 }
 .recipe-book-title { margin: 1px 0 5px 1px; }
+.recipe-book-body { display: flex; align-items: flex-start; gap: 2px; }
+.recipe-viewport {
+  width: 90px;
+  height: 126px;
+  overflow: hidden;
+}
+.recipe-grid {
+  grid-template-columns: repeat(5, 18px);
+  will-change: transform;
+}
+.recipe-scrollbar {
+  position: relative;
+  width: 12px;
+  height: 126px;
+  background: #1e1e1e;
+  box-shadow: inset 1px 1px 0 #000000, inset -1px -1px 0 #555555;
+}
+.recipe-scroll-knob {
+  position: absolute;
+  left: 0; top: 0;
+  width: 12px; height: 15px;
+  background: #c6c6c6;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #565656;
+  cursor: grab;
+}
+.recipe-scroll-knob:active { cursor: grabbing; }
+.recipe-scrollbar.disabled .recipe-scroll-knob { background: #8b8b8b; cursor: default; }
 .recipe-grid .inventory-slot.uncraftable { opacity: 0.35; filter: grayscale(0.85); }
 .recipe-grid .inventory-slot.previewed {
   z-index: 1;
@@ -562,7 +589,35 @@ select option { background: #0d1420; }
   transform-origin: center;
 }
 .admin-title { margin: 1px 0 5px 1px; }
-.admin-grid { grid-template-columns: repeat(9, 18px); }
+.admin-body { display: flex; align-items: flex-start; gap: 2px; }
+.admin-viewport {
+  /* 9 columns × 18px wide, 10 rows × 18px tall visible at a time */
+  width: 162px;
+  height: 180px;
+  overflow: hidden;
+}
+.admin-grid {
+  grid-template-columns: repeat(9, 18px);
+  will-change: transform;
+}
+/* Minecraft creative-inventory style scrollbar: dark groove + light knob */
+.admin-scrollbar {
+  position: relative;
+  width: 12px;
+  height: 180px;
+  background: #1e1e1e;
+  box-shadow: inset 1px 1px 0 #000000, inset -1px -1px 0 #555555;
+}
+.admin-scroll-knob {
+  position: absolute;
+  left: 0; top: 0;
+  width: 12px; height: 15px;
+  background: #c6c6c6;
+  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #565656;
+  cursor: grab;
+}
+.admin-scroll-knob:active { cursor: grabbing; }
+.admin-scrollbar.disabled .admin-scroll-knob { background: #8b8b8b; cursor: default; }
 .admin-hint { margin: 5px 0 0 1px; }
 /* Villager trading (no classic 1.2.4 art exists — imitates the window chrome) */
 .trade-window {
