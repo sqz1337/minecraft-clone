@@ -28,7 +28,9 @@ const C = {
   hemiSkyNight: new THREE.Color(0x0e1830),
   hemiGround: new THREE.Color(0x54483a),
   overcast: new THREE.Color(0x9aa4ad),
-  underwater: new THREE.Color(0x0a3550)
+  underwater: new THREE.Color(0x0a3550),
+  silentHillSky: new THREE.Color(0xaec3d2),
+  silentHillFog: new THREE.Color(0xb8c7cf)
 }
 
 const tmpA = new THREE.Color()
@@ -56,6 +58,7 @@ export class Environment {
     cloudCover: 0.3, cloudDark: 0, lightMul: 1, fogMul: 1, rain: 0, snow: 0, wind: 1, wetness: 0
   }
   private sunDir = new THREE.Vector3()
+  private silentHill = false
 
   constructor(scene: THREE.Scene, shadowMapSize: number, viewDist: number) {
     this.sun = new THREE.DirectionalLight(0xffffff, 3)
@@ -98,6 +101,9 @@ export class Environment {
   }
 
   setWeather(w: WeatherOut): void { this.weather = w }
+
+  /** Keeps the horizon swallowed by pale fog regardless of time and weather. */
+  setSilentHill(enabled: boolean): void { this.silentHill = enabled }
 
   /** Toggling castShadow is enough: three recompiles affected programs itself. */
   setShadowsEnabled(enabled: boolean): void {
@@ -155,6 +161,10 @@ export class Environment {
     desaturate(tmpA, overcast * 0.6)
     tmpA.lerp(C.overcast, overcast * 0.45 * dayF)
     U.uHorizon.value.copy(tmpA)
+    if (this.silentHill) {
+      U.uZenith.value.lerp(C.silentHillSky, 0.76)
+      U.uHorizon.value.lerp(C.silentHillFog, 0.92)
+    }
 
     // sun light
     tmpA.copy(C.sunWarm).lerp(C.sunNoon, smoothstep(0, 0.5, sunY))
@@ -185,6 +195,11 @@ export class Environment {
     if (underwater) {
       this.fog.color.copy(C.underwater).multiplyScalar(0.35 + dayF * 0.65)
       this.fog.density = 0.075
+    } else if (this.silentHill) {
+      this.fog.color.copy(C.silentHillFog)
+      // Exp2 density 0.032 leaves nearby blocks crisp while silhouettes fade
+      // heavily around 30 blocks and disappear into the horizon by about 50.
+      this.fog.density = 0.032
     } else {
       this.fog.color.copy(U.uHorizon.value)
       this.fog.density = baseDensity * w.fogMul

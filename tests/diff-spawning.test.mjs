@@ -284,6 +284,25 @@ test('low render distance still queues the complete radius-8 mob simulation area
   assert.ok(world.genQueue.every(chunk => Math.abs(chunk.cx) <= 8 && Math.abs(chunk.cz) <= 8))
 })
 
+test('terrain generation seeds persistent land-animal packs without duplicating a chunk', () => {
+  const world = voxelWorld(BIOME.PLAINS)
+  world.setLight(15)
+  world.topSolidY = () => 1
+  world.getBlock = (_x, y) => Math.floor(y) <= 1 ? B.GRASS : B.AIR
+  const manager = new EntityManager(world)
+  const generated = []
+  for (let cx = -8; cx <= 8; cx++) for (let cz = -8; cz <= 8; cz++) {
+    generated.push([cx, cz])
+    manager.populateChunkAnimals(cx, cz, 0x12345678)
+  }
+  assert.ok(manager.passiveCount >= 24, `expected visible worldgen herds, got ${manager.passiveCount}`)
+  assert.ok(manager.passiveCount <= mod.exports.WORLDGEN_ANIMAL_CAP)
+  assert.ok(manager.snapshots.every(entity => entity.persistent && entity.kind !== 'squid'))
+  const count = manager.passiveCount
+  for (const [cx, cz] of generated) manager.populateChunkAnimals(cx, cz, 0x12345678)
+  assert.equal(manager.passiveCount, count, 'reprocessing a generated chunk must be idempotent')
+})
+
 test('hostile persistence and despawn age survive EntityManager serialization', () => {
   const source = new EntityManager(voxelWorld())
   disableNaturalSpawns(source)

@@ -25,6 +25,7 @@ const NAME_OVERRIDES: Readonly<Record<string, string | null>> = {
   compass: 'compass_16',
   clock: 'clock_00',
   bed: null, // 26.2 uses a composite two-block model; keep the existing bed icon for now.
+  wood_door: null, // this legacy registry uses the canonical gui/items.png door cell
   emerald: null, // no extracted vanilla asset (emerald is 1.3+); the tinted sprite is used instead
   redstone: null, // these restored legacy materials intentionally use gui/items.png cells
   brick: null,

@@ -1,6 +1,9 @@
 node_modules/
 dist/
+src-tauri/target/
+src-tauri/target-codex/
 .DS_Store
 .claude/
 .codex-vite.log
 1.0/
+reference/

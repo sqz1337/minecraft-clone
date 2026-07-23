@@ -7,6 +7,7 @@ import type { World } from './World'
 import { B, CROSS, SOLID, tileFor } from './Blocks'
 import { ITEMS } from './Items'
 import type { EnchantmentInstance } from '../player/Enchantments'
+import { createExtrudedItemGeometry, setExtrudedItemUv } from '../gfx/HeldItemGeometry'
 
 /** Hard cap for item entities in the world; the oldest drop is culled first. */
 const MAX_DROPS = 200
@@ -64,12 +65,14 @@ export class ItemDrops {
     })
     this.flatMaterial = new THREE.MeshLambertMaterial({
       map: atlas.colorTex,
+      vertexColors: true,
       transparent: true,
       alphaTest: 0.08,
       side: THREE.DoubleSide
     })
     this.spriteMaterial = new THREE.MeshLambertMaterial({
       map: sprites.texture,
+      vertexColors: true,
       transparent: true,
       alphaTest: 0.08,
       side: THREE.DoubleSide
@@ -84,12 +87,12 @@ export class ItemDrops {
     let geometry: THREE.BufferGeometry
     let material: THREE.MeshLambertMaterial
     if (item.sprite) {
-      geometry = new THREE.PlaneGeometry(0.45, 0.45)
-      this.applyPlaneUv(geometry, this.sprites.uvRect(item.sprite[0], item.sprite[1]))
+      geometry = createExtrudedItemGeometry(0.45)
+      setExtrudedItemUv(geometry, this.sprites.uvRect(item.sprite[0], item.sprite[1]))
       material = this.spriteMaterial
     } else if (CROSS[id]) {
-      geometry = new THREE.PlaneGeometry(0.45, 0.45)
-      this.applyPlaneUv(geometry, this.atlas.uvRect(tileFor(id, 0)))
+      geometry = createExtrudedItemGeometry(0.45)
+      setExtrudedItemUv(geometry, this.atlas.uvRect(tileFor(id, 0)))
       material = this.flatMaterial
     } else {
       geometry = new THREE.BoxGeometry(0.28, 0.28, 0.28)
@@ -126,15 +129,6 @@ export class ItemDrops {
       age: 0,
       pickupDelay: options.pickupDelay ?? 0.35
     })
-  }
-
-  private applyPlaneUv(geometry: THREE.BufferGeometry, rect: [number, number, number, number]): void {
-    const [u0, v0, u1, v1] = rect
-    const uv = geometry.getAttribute('uv') as THREE.BufferAttribute
-    for (let i = 0; i < uv.count; i++) {
-      uv.setXY(i, uv.getX(i) < 0.5 ? u0 : u1, uv.getY(i) < 0.5 ? v0 : v1)
-    }
-    uv.needsUpdate = true
   }
 
   update(dt: number, player: Player): void {

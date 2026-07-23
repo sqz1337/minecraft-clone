@@ -13,9 +13,11 @@ import {
   type MobKind, type SavedEntity, type VillagerProfession
 } from '../entities/EntityTypes'
 import { parseEnchantments } from '../player/Enchantments'
+import { desktopWorlds, isDesktopApp, type NativeWorldRecord } from './Desktop'
 
 const SAVE_VERSION = 1
 const STORAGE_PREFIX = 'realmcraft.world.v1.'
+const WORLD_CATALOG_KEY = 'realmcraft.worlds.v1'
 const WEATHER_KINDS: WeatherKind[] = ['clear', 'cloudy', 'rain', 'storm']
 
 export interface SavedPlayerState {
@@ -45,6 +47,8 @@ export interface WorldSaveData {
   savedAt: number
   player: SavedPlayerState
   gameMode: GameMode
+  /** Permanent dense fog and the world's alternate ambient soundtrack. */
+  silentHill?: boolean
   inventory: SerializedInventory
   armor: SerializedEquipment
   drops: SavedDrop[]
@@ -62,6 +66,147 @@ export interface WorldSaveData {
   villageChunks?: string[]
   /** Chunks whose procedural village door pairs have been backfilled. */
   villageDoorChunks?: string[]
+  /** Chunks already considered by the deterministic terrain-animal pass. */
+  animalChunks?: string[]
+}
+
+export interface WorldSummary extends NativeWorldRecord {}
+
+function cleanWorldName(value: unknown): string {
+  if (typeof value !== 'string') return 'New World'
+  const name = value.trim().replace(/[\u0000-\u001f]/g, '').slice(0, 48)
+  return name || 'New World'
+}
+
+function cleanWorldSummary(value: unknown): WorldSummary | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.seed !== 'string') return null
+  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(value.id) || value.seed.length > 200) return null
+  return {
+    id: value.id,
+    name: cleanWorldName(value.name),
+    seed: value.seed,
+    gameMode: value.gameMode === 'creative' ? 'creative' : 'survival',
+    createdAt: isFiniteNumber(value.createdAt) ? value.createdAt : Date.now(),
+    lastPlayed: isFiniteNumber(value.lastPlayed) ? value.lastPlayed : 0,
+    silentHill: value.silentHill === true
+  }
+}
+
+function readLocalCatalog(): WorldSummary[] {
+  try {
+    const raw = localStorage.getItem(WORLD_CATALOG_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.map(cleanWorldSummary).filter((world): world is WorldSummary => world !== null)
+  } catch {
+    return []
+  }
+}
+
+function writeLocalCatalog(worlds: readonly WorldSummary[]): void {
+  try { localStorage.setItem(WORLD_CATALOG_KEY, JSON.stringify(worlds)) } catch { /* native storage may still work */ }
+}
+
+function upsertLocalCatalog(world: WorldSummary): void {
+  const worlds = readLocalCatalog().filter(candidate => candidate.id !== world.id)
+  writeLocalCatalog([world, ...worlds])
+}
+
+function localLegacyWorlds(): WorldSummary[] {
+  const worlds: WorldSummary[] = []
+  try {
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index)
+      if (!key?.startsWith(STORAGE_PREFIX)) continue
+      const seed = decodeURIComponent(key.slice(STORAGE_PREFIX.length))
+      const raw = localStorage.getItem(key)
+      if (!raw) continue
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      if (parsed.seed !== seed) continue
+      const id = /^[a-zA-Z0-9_-]{1,80}$/.test(seed) ? seed : `legacy_${Math.abs(hashString(seed))}`
+      if (id !== seed) {
+        const migratedKey = STORAGE_PREFIX + encodeURIComponent(id)
+        if (!localStorage.getItem(migratedKey)) localStorage.setItem(migratedKey, raw)
+      }
+      worlds.push({
+        id,
+        name: `World ${seed || 'legacy'}`,
+        seed,
+        gameMode: parsed.gameMode === 'creative' ? 'creative' : 'survival',
+        createdAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : Date.now(),
+        lastPlayed: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
+        silentHill: parsed.silentHill === true
+      })
+    }
+  } catch { /* ignore damaged legacy keys */ }
+  return worlds
+}
+
+function hashString(value: string): number {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index++) hash = Math.imul(hash ^ value.charCodeAt(index), 0x01000193)
+  return hash | 0
+}
+
+function uniqueWorldId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.().replace(/-/g, '')
+  return uuid ? `world_${uuid}` : `world_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+/** Catalog shared by the browser build and the native Tauri world directory. */
+export class WorldLibrary {
+  async list(): Promise<WorldSummary[]> {
+    const local = [...readLocalCatalog(), ...localLegacyWorlds()]
+    const native = await desktopWorlds.list() ?? []
+    const merged = new Map<string, WorldSummary>()
+    for (const candidate of [...local, ...native]) {
+      const world = cleanWorldSummary(candidate)
+      if (!world) continue
+      const existing = merged.get(world.id)
+      if (!existing || world.lastPlayed >= existing.lastPlayed) merged.set(world.id, world)
+    }
+    const worlds = [...merged.values()].sort((a, b) => b.lastPlayed - a.lastPlayed || a.name.localeCompare(b.name))
+    writeLocalCatalog(worlds)
+    return worlds
+  }
+
+  async create(name: string, seed: string, gameMode: GameMode, silentHill = false): Promise<WorldSummary> {
+    const now = Date.now()
+    const world: WorldSummary = {
+      id: uniqueWorldId(),
+      name: cleanWorldName(name),
+      seed: seed.trim().slice(0, 200) || Math.floor(Math.random() * 1e12).toString(36),
+      gameMode,
+      createdAt: now,
+      lastPlayed: now,
+      silentHill
+    }
+    const worlds = (await this.list()).filter(candidate => candidate.id !== world.id)
+    writeLocalCatalog([world, ...worlds])
+    await desktopWorlds.register(world)
+    return world
+  }
+
+  async touch(world: WorldSummary): Promise<WorldSummary> {
+    const updated = { ...world, lastPlayed: Date.now() }
+    const worlds = (await this.list()).filter(candidate => candidate.id !== world.id)
+    writeLocalCatalog([updated, ...worlds])
+    await desktopWorlds.register(updated)
+    return updated
+  }
+
+  async delete(world: WorldSummary): Promise<boolean> {
+    const worlds = (await this.list()).filter(candidate => candidate.id !== world.id)
+    writeLocalCatalog(worlds)
+    try {
+      localStorage.removeItem(STORAGE_PREFIX + encodeURIComponent(world.id))
+      // Historical saves were keyed by seed rather than an independent world id.
+      if (world.id === world.seed) localStorage.removeItem(STORAGE_PREFIX + encodeURIComponent(world.seed))
+    } catch { /* native delete remains authoritative in desktop builds */ }
+    const native = await desktopWorlds.delete(world.id)
+    return native ?? true
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -309,6 +454,7 @@ function parseSave(value: unknown, seed: string): WorldSaveData | null {
         : {})
     },
     gameMode: value.gameMode === 'survival' ? 'survival' : 'creative',
+    silentHill: value.silentHill === true,
     inventory: parseInventory(value.inventory),
     armor: parseEquipment(value.armor),
     drops: parseDrops(value.drops),
@@ -322,15 +468,21 @@ function parseSave(value: unknown, seed: string): WorldSaveData | null {
     worldGenVersion: value.worldGenVersion === 3 ? 3 : value.worldGenVersion === 2 ? 2 : 1,
     structureChests: parseKeyList(value.structureChests, /^-?\d+,-?\d+,-?\d+$/, 16384),
     villageChunks: parseKeyList(value.villageChunks, /^-?\d+,-?\d+$/, 16384),
-    villageDoorChunks: parseKeyList(value.villageDoorChunks, /^-?\d+,-?\d+$/, 16384)
+    villageDoorChunks: parseKeyList(value.villageDoorChunks, /^-?\d+,-?\d+$/, 16384),
+    animalChunks: parseKeyList(value.animalChunks, /^-?\d+,-?\d+$/, 16384)
   }
 }
 
 export class WorldSaveStore {
   private readonly storageKey: string
+  private pendingNativeSave: Promise<boolean> | null = null
 
-  constructor(private readonly seed: string) {
-    this.storageKey = STORAGE_PREFIX + encodeURIComponent(seed)
+  constructor(
+    private readonly seed: string,
+    private readonly worldId = seed,
+    private summary?: WorldSummary
+  ) {
+    this.storageKey = STORAGE_PREFIX + encodeURIComponent(worldId)
   }
 
   load(): WorldSaveData | null {
@@ -343,6 +495,20 @@ export class WorldSaveStore {
     }
   }
 
+  async loadAsync(): Promise<WorldSaveData | null> {
+    const native = await desktopWorlds.load(this.worldId)
+    if (native) {
+      try {
+        const parsed = parseSave(JSON.parse(native), this.seed)
+        if (parsed) {
+          try { localStorage.setItem(this.storageKey, native) } catch { /* native copy is enough */ }
+          return parsed
+        }
+      } catch { /* fall through to local compatibility storage */ }
+    }
+    return this.load()
+  }
+
   save(data: Omit<WorldSaveData, 'version' | 'seed' | 'savedAt'>): boolean {
     try {
       const payload: WorldSaveData = {
@@ -351,10 +517,42 @@ export class WorldSaveStore {
         savedAt: Date.now(),
         ...data
       }
-      localStorage.setItem(this.storageKey, JSON.stringify(payload))
+      payload.silentHill ??= this.summary?.silentHill ?? false
+      const serialized = JSON.stringify(payload)
+      let localSaved = true
+      try { localStorage.setItem(this.storageKey, serialized) } catch { localSaved = false }
+      if (isDesktopApp()) {
+        const metadata = this.summary ?? {
+          id: this.worldId, name: `World ${this.seed}`, seed: this.seed,
+          gameMode: payload.gameMode, createdAt: payload.savedAt, lastPlayed: payload.savedAt,
+          silentHill: payload.silentHill === true
+        }
+        this.summary = {
+          ...metadata, gameMode: payload.gameMode, lastPlayed: payload.savedAt,
+          silentHill: payload.silentHill === true
+        }
+        upsertLocalCatalog(this.summary)
+        const previous = this.pendingNativeSave ?? Promise.resolve(true)
+        this.pendingNativeSave = previous
+          .catch(() => false)
+          .then(() => desktopWorlds.save(this.worldId, serialized, this.summary!).then(result => result ?? false))
+        return true
+      }
+      if (!localSaved) return false
+      if (this.summary) {
+        this.summary = {
+          ...this.summary, gameMode: payload.gameMode, lastPlayed: payload.savedAt,
+          silentHill: payload.silentHill === true
+        }
+        upsertLocalCatalog(this.summary)
+      }
       return true
     } catch {
       return false
     }
+  }
+
+  async flush(): Promise<boolean> {
+    return this.pendingNativeSave ? await this.pendingNativeSave : true
   }
 }

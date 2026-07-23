@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Realmcraft",
+  "version": "1.0.0",
+  "identifier": "com.realmcraft.game",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Realmcraft",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 960,
+        "minHeight": 540,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "shortDescription": "A procedural voxel sandbox",
+    "longDescription": "Realmcraft is a standalone procedural voxel survival and creative sandbox.",
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": true,
+        "languages": ["English", "Russian"]
+      }
+    }
+  }
+}
+

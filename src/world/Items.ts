@@ -251,6 +251,13 @@ const NON_BLOCK_ITEMS: ItemDefinition[] = [
 
 const ITEM_COUNT = Math.max(...NON_BLOCK_ITEMS.map(item => item.id)) + 1
 
+// A few placeable blocks are represented by dedicated item sprites in classic
+// Minecraft. Keeping their block id is convenient for this metadata-free
+// inventory, but the GUI must still draw the item rather than an isometric cube.
+const BLOCK_ITEM_SPRITES: Readonly<Partial<Record<number, readonly [number, number]>>> = {
+  [B.WOOD_DOOR_LOWER]: [11, 2]
+}
+
 /**
  * Item registry: indices 0..255 mirror placeable blocks, 256+ are pure items.
  * Slots without an item are null.
@@ -265,7 +272,7 @@ export const ITEMS: readonly (ItemDefinition | null)[] = (() => {
       name: block.name,
       stackSize: 64,
       placeBlock: block.id,
-      sprite: null,
+      sprite: BLOCK_ITEM_SPRITES[block.id] ?? null,
       tool: null,
       food: null,
       armor: null,

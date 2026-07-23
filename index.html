@@ -13,49 +13,124 @@
   <div id="title" class="screen">
     <div class="title-inner">
       <h1 class="game-title">REALM<span>CRAFT</span></h1>
-      <p class="tagline">A procedural voxel wilderness</p>
-      <div class="title-form">
-        <label class="field">
-          <span>World Seed</span>
-          <input id="seed-input" type="text" placeholder="leave blank for random" autocomplete="off" spellcheck="false" />
-        </label>
-        <label class="field">
-          <span>Graphics Quality</span>
-          <select id="quality-select">
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high" selected>High</option>
-            <option value="ultra">Ultra</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Game Mode</span>
-          <select id="game-mode-select">
-            <option value="survival" selected>Survival</option>
-            <option value="creative">Creative</option>
-          </select>
-        </label>
-        <button id="btn-enter" class="btn btn-primary">Enter World</button>
-        <button id="btn-title-controls" class="btn">Controls</button>
+      <p class="tagline">Java-style voxel edition</p>
+      <div class="title-form menu-buttons">
+        <button id="btn-singleplayer" class="btn">Singleplayer</button>
+        <button id="btn-title-options" class="btn">Options...</button>
+        <div class="menu-row">
+          <button id="btn-title-controls" class="btn">Controls</button>
+          <button id="btn-quit-game" class="btn">Quit Game</button>
+        </div>
       </div>
-      <p class="footnote">WebGL2 · classic 16×16 block textures · local edition</p>
+      <p class="footnote">Realmcraft 1.0 · local worlds</p>
+    </div>
+  </div>
+
+  <div id="world-select" class="screen hidden menu-screen">
+    <div class="world-menu">
+      <h2>Select World</h2>
+      <div id="world-list" class="world-list" role="listbox" aria-label="Saved worlds"></div>
+      <p id="world-empty" class="world-empty hidden">No worlds yet. Create one to begin.</p>
+      <div class="menu-row world-actions">
+        <button id="btn-play-world" class="btn btn-primary" disabled>Play Selected World</button>
+        <button id="btn-create-world" class="btn">Create New World</button>
+      </div>
+      <div class="menu-row">
+        <button id="btn-delete-world" class="btn" disabled>Delete</button>
+        <button id="btn-world-cancel" class="btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="world-create" class="screen hidden menu-screen">
+    <div class="create-world-panel">
+      <h2>Create New World</h2>
+      <label class="field"><span>World Name</span>
+        <input id="world-name-input" type="text" value="New World" maxlength="48" autocomplete="off" />
+      </label>
+      <label class="field"><span>Game Mode</span>
+        <select id="game-mode-select">
+          <option value="survival" selected>Survival</option>
+          <option value="creative">Creative</option>
+        </select>
+      </label>
+      <p id="game-mode-description" class="field-description">Search for resources, craft, gain levels, health and hunger.</p>
+      <label class="field"><span>Seed for the World Generator</span>
+        <input id="seed-input" type="text" placeholder="Leave blank for a random seed" maxlength="200" autocomplete="off" spellcheck="false" />
+      </label>
+      <button id="btn-world-silent-hill" class="btn world-option-button" type="button" aria-pressed="false">Silent Hill: OFF</button>
+      <p id="silent-hill-description" class="field-description world-option-description">Permanent dense fog and an alternate atmospheric soundtrack.</p>
+      <div class="menu-row create-actions">
+        <button id="btn-confirm-create" class="btn btn-primary">Create New World</button>
+        <button id="btn-create-cancel" class="btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="options" class="screen hidden menu-screen translucent">
+    <div class="options-menu options-menu-wide">
+      <h2>Options</h2>
+      <div class="mc-options-grid">
+        <label class="mc-slider-option"><span id="opt-fov-label">FOV: Normal</span><input id="opt-fov" type="range" min="55" max="100" step="1" /></label>
+        <label class="mc-slider-option"><span id="opt-sensitivity-label">Sensitivity: 100%</span><input id="opt-sensitivity" type="range" min="0.1" max="1" step="0.05" /></label>
+        <button id="btn-invert-mouse" class="btn">Invert Mouse: OFF</button>
+        <button id="btn-fullscreen" class="btn">Fullscreen: OFF</button>
+        <button id="btn-video-settings" class="btn">Video Settings...</button>
+        <button id="btn-sound-settings" class="btn">Music &amp; Sounds...</button>
+        <button id="btn-options-controls" class="btn mc-wide-option">Controls...</button>
+      </div>
+      <button id="btn-options-done" class="btn btn-primary options-done">Done</button>
+    </div>
+  </div>
+
+  <div id="video-settings" class="screen hidden menu-screen translucent">
+    <div class="options-menu options-menu-wide">
+      <h2>Video Settings</h2>
+      <div class="mc-options-grid">
+        <button id="btn-graphics" class="btn">Graphics: Fancy</button>
+        <label class="mc-slider-option"><span id="opt-render-label">Render Distance: 8 chunks</span><input id="opt-render" type="range" min="4" max="12" step="1" /></label>
+        <button id="btn-view-bobbing" class="btn">View Bobbing: ON</button>
+        <button id="btn-video-fullscreen" class="btn">Fullscreen: OFF</button>
+      </div>
+      <p class="settings-note">Graphics settings are applied immediately. A larger view distance can reduce FPS.</p>
+      <button id="btn-video-done" class="btn btn-primary options-done">Done</button>
+    </div>
+  </div>
+
+  <div id="sound-settings" class="screen hidden menu-screen translucent">
+    <div class="options-menu options-menu-wide sound-menu">
+      <h2>Music &amp; Sound Options</h2>
+      <div class="mc-options-grid">
+        <label class="mc-slider-option mc-wide-option"><span id="opt-volume-label">Master Volume: 100%</span><input id="opt-volume" type="range" min="0" max="1" step="0.05" /></label>
+      </div>
+      <p class="settings-note">Controls ambient sounds, blocks, creatures and interface effects.</p>
+      <button id="btn-sound-done" class="btn btn-primary options-done">Done</button>
+    </div>
+  </div>
+
+  <div id="delete-world-confirm" class="screen hidden menu-screen translucent">
+    <div class="confirm-panel">
+      <h2>Delete World?</h2>
+      <p id="delete-world-name"></p>
+      <p class="warning">This world will be lost forever! (A long time!)</p>
+      <div class="menu-row">
+        <button id="btn-confirm-delete" class="btn danger">Delete</button>
+        <button id="btn-delete-cancel" class="btn">Cancel</button>
+      </div>
     </div>
   </div>
 
   <!-- Loading screen -->
   <div id="loading" class="screen hidden">
-    <div class="loading-inner">
-      <h2>Shaping the world…</h2>
-      <div class="load-track"><div id="load-bar"></div></div>
+    <div class="world-forge">
+      <div class="world-preview-frame">
+        <canvas id="load-world-canvas" width="560" height="330"></canvas>
+        <div class="world-preview-scan"></div>
+      </div>
+      <h2>Building terrain</h2>
       <p id="load-label">Generating terrain</p>
-    </div>
-  </div>
-
-  <!-- Click to start overlay -->
-  <div id="click-start" class="screen hidden">
-    <div class="loading-inner">
-      <h2>World ready</h2>
-      <p class="hint">Click anywhere to enter</p>
+      <p id="load-percent">0%</p>
+      <p id="load-tip">Exploring the seed...</p>
     </div>
   </div>
 
@@ -64,52 +139,31 @@
     <div class="pause-inner">
       <h2>Paused</h2>
       <div class="pause-buttons">
-        <button id="btn-resume" class="btn btn-primary">Resume</button>
-        <button id="btn-pause-controls" class="btn">Controls</button>
-        <button id="btn-pause-settings" class="btn">Settings</button>
-        <button id="btn-quit" class="btn">Quit to Title</button>
-      </div>
-      <div id="settings-panel" class="panel hidden">
-        <h3>Settings</h3>
-        <label class="row"><span>Master Volume</span><input id="opt-volume" type="range" min="0" max="1" step="0.05" /></label>
-        <label class="row"><span>Render Distance</span><input id="opt-render" type="range" min="4" max="12" step="1" /><b id="opt-render-val"></b></label>
-        <label class="row"><span>Quality</span>
-          <select id="opt-quality">
-            <option value="low">Low</option><option value="medium">Medium</option>
-            <option value="high">High</option><option value="ultra">Ultra</option>
-          </select>
-        </label>
-        <label class="row"><span>Head Bob</span><input id="opt-bob" type="checkbox" /></label>
+        <button id="btn-resume" class="btn btn-primary">Back to Game</button>
+        <button id="btn-save-world" class="btn">Save World</button>
+        <div class="menu-row">
+          <button id="btn-pause-options" class="btn">Options...</button>
+          <button id="btn-pause-controls" class="btn">Controls</button>
+        </div>
+        <button id="btn-quit" class="btn">Save and Quit to Title</button>
       </div>
     </div>
   </div>
 
   <!-- Controls overlay (shared by title + pause) -->
-  <div id="controls" class="screen hidden translucent">
-    <div class="panel controls-panel">
-      <h3>Controls</h3>
-      <div class="controls-grid">
-        <b>W A S D</b><span>Move</span>
-        <b>Mouse</b><span>Look</span>
-        <b>Space</b><span>Jump / Swim up / Fly up</span>
-        <b>Shift</b><span>Sprint</span>
-        <b>C / Ctrl</b><span>Crouch / Fly down</span>
-        <b>Left Click</b><span>Break block / attack creature</span>
-        <b>Right Click</b><span>Place / use / eat / draw bow</span>
-        <b>Wheel / 1–9</b><span>Select block</span>
-        <b>E</b><span>Open inventory (Survival)</span>
-        <b>O</b><span>Admin item panel (temporary)</span>
-        <b>Q</b><span>Drop selected item</span>
-        <b>F</b><span>Flashlight</span>
-        <b>G</b><span>Toggle flight</span>
-        <b>R</b><span>Cycle hotbar page</span>
-        <b>X</b><span>Ore xray + noclip</span>
-        <b>T</b><span>Fast-forward time</span>
-        <b>Y</b><span>Cycle weather</span>
-        <b>/</b><span>Command console (/spawn, /help)</span>
-        <b>Esc</b><span>Pause</span>
+  <div id="controls" class="screen hidden menu-screen translucent">
+    <div class="controls-menu">
+      <h2>Controls</h2>
+      <div class="fixed-controls">
+        <div><span>Attack / Destroy</span><b>Left Button</b></div>
+        <div><span>Use Item / Place Block</span><b>Right Button</b></div>
       </div>
-      <button id="btn-close-controls" class="btn btn-primary">Close</button>
+      <div id="controls-list" class="controls-list"></div>
+      <p class="controls-hint">Click a control, then press the new key. Escape cancels rebinding.</p>
+      <div class="menu-row">
+        <button id="btn-reset-controls" class="btn">Reset Keys</button>
+        <button id="btn-close-controls" class="btn btn-primary">Done</button>
+      </div>
     </div>
   </div>
 

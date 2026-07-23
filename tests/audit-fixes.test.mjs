@@ -73,10 +73,19 @@ test('the original sound bank includes hostile, interaction and ambient samples'
   for (const asset of [
     'mob/zombie/say1.ogg', 'mob/skeleton/say1.ogg', 'mob/spider/say1.ogg',
     'mob/creeper/say1.ogg', 'mob/slime/say1.ogg', 'mob/enderman/idle1.ogg',
+    'mob/enderman/portal.ogg', 'mob/wolf/bark1.ogg', 'mob/cat/meow1.ogg',
+    'mob/irongolem/hit1.ogg', 'mob/irongolem/throw.ogg',
     'random/bow.ogg', 'random/eat1.ogg', 'random/fuse.ogg', 'random/chestopen.ogg',
+    'random/door_open.ogg', 'random/door_close.ogg',
     'random/orb.ogg', 'random/explode1.ogg', 'music/calm1.ogg'
   ]) {
     assert.ok(existsSync(new URL(`../public/assets/minecraft/sound/${asset}`, import.meta.url)), `missing sound ${asset}`)
+  }
+  for (const track of ['music1.mp3', 'music2.mp3', 'music3.mp3', 'music4.mp3']) {
+    assert.ok(
+      existsSync(new URL(`../public/assets/realmcraft/music/silent-hill/${track}`, import.meta.url)),
+      `missing Silent Hill music ${track}`
+    )
   }
 })
 

@@ -2,7 +2,9 @@ export const PASSIVE_KINDS = ['pig', 'cow', 'sheep', 'chicken'] as const
 export type PassiveKind = typeof PASSIVE_KINDS[number]
 
 /** Peaceful mobs added by the Overworld stage without changing the original farm-animal registry. */
-export const SPECIAL_PASSIVE_KINDS = ['mooshroom'] as const
+export const SPECIAL_PASSIVE_KINDS = [
+  'mooshroom', 'wolf', 'ocelot', 'cat', 'squid', 'snow_golem', 'iron_golem'
+] as const
 export type SpecialPassiveKind = typeof SPECIAL_PASSIVE_KINDS[number]
 export type PeacefulKind = PassiveKind | SpecialPassiveKind
 
@@ -143,7 +145,7 @@ export interface MobDefinition {
 export interface PassiveDefinition extends MobDefinition {
   kind: PeacefulKind
   category: 'passive'
-  temptingItem: number
+  temptingItem: number | null
 }
 
 export interface VillagerDefinition extends MobDefinition {
