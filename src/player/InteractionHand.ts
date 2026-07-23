@@ -91,6 +91,7 @@ export function installInteractionHand(InteractionClass: InteractionConstructor)
     }
     this.placing = true
     this.placeCooldown = 0
+    this.eatSoundTimer = 0.08
   }
   prototype.secondaryUp = function(this: Interaction): void {
     if (this.chargingBow) this.releaseBow()
@@ -98,6 +99,7 @@ export function installInteractionHand(InteractionClass: InteractionConstructor)
     this.bowCharge = 0
     this.placing = false
     this.eatProgress = 0
+    this.eatSoundTimer = 0
   }
   prototype.releaseBow = function(this: Interaction): void {
     const power = bowPower(this.bowCharge)

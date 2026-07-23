@@ -3,6 +3,9 @@ import { xmur3, hash01, hash2, mulberry32, clamp, lerp, smoothstep } from '../ut
 import { B, SOLID } from './Blocks'
 import { Chunk, CHUNK_SIZE, WORLD_HEIGHT } from './Chunk'
 import { MapCarvers, type CarverBaseSampler } from './MapCarvers'
+import { VanillaMapCarvers } from './VanillaMapCarvers'
+import { VanillaLakes } from './VanillaLakes'
+import { parseJavaWorldSeed } from './JavaRandom'
 import { BiomeDecorator } from './BiomeDecorator'
 import { OreGenerator } from './OreGenerator'
 import { DensityTerrain, DENSITY_SEA_LEVEL } from './DensityTerrain'
@@ -29,6 +32,8 @@ export * from './WorldGenShared'
 
 export class WorldGen {
   readonly seedNum: number
+
+  readonly seedLong: bigint
 
   readonly seedStr: string
 
@@ -58,7 +63,9 @@ export class WorldGen {
 
   special: SimplexNoise
 
-  carvers: MapCarvers
+  carvers: MapCarvers | VanillaMapCarvers
+
+  lakes: VanillaLakes
 
   oreGenerator: OreGenerator
 
@@ -72,12 +79,15 @@ export class WorldGen {
 
   colCache = new Map<string, ColumnInfo>()
 
-  constructor(seedStr: string, generatorVersion: WorldGenVersion = CURRENT_WORLD_GEN_VERSION) {
+  constructor(seedStr: string, _generatorVersion: WorldGenVersion = CURRENT_WORLD_GEN_VERSION) {
       this.seedStr = seedStr
-      this.generatorVersion = generatorVersion
-      this.seaLevel = generatorVersion >= 3 ? SEA_LEVEL : LEGACY_SEA_LEVEL
+      // Old saves intentionally move to the new generator. Existing stored
+      // chunks remain intact; every newly requested chunk uses version 4.
+      this.generatorVersion = CURRENT_WORLD_GEN_VERSION
+      this.seaLevel = SEA_LEVEL
       const s = xmur3(seedStr)
       this.seedNum = s
+      this.seedLong = parseJavaWorldSeed(seedStr)
       this.continent = new SimplexNoise(s ^ 0x1000)
       this.hills = new SimplexNoise(s ^ 0x2000)
       this.ridge = new SimplexNoise(s ^ 0x3000)
@@ -89,10 +99,11 @@ export class WorldGen {
       this.cave1 = new SimplexNoise(s ^ 0x9000)
       this.cave2 = new SimplexNoise(s ^ 0xa000)
       this.special = new SimplexNoise(s ^ 0xb000)
-      this.carvers = new MapCarvers(s)
+      this.carvers = new VanillaMapCarvers(this.seedLong)
+      this.lakes = new VanillaLakes(this.seedLong)
       this.oreGenerator = new OreGenerator(s)
       this.biomeDecorator = new BiomeDecorator(s)
-      this.densityTerrain = new DensityTerrain(s)
+      this.densityTerrain = new DensityTerrain(this.seedLong)
       this.structureIndex = new StructureIndex(s, this)
     }
 }

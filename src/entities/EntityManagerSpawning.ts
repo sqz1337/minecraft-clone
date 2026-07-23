@@ -123,7 +123,7 @@ export function installEntityManagerSpawning(EntityManagerClass: EntityManagerCo
       if (surfaceY <= 1) continue
       const baseY = entry.kind === 'squid'
         ? this.findNaturalSquidY(x, z, surfaceY)
-        : category === 'passive' ? surfaceY : this.findNaturalHostileY(x, z, surfaceY)
+        : category === 'passive' ? surfaceY : this.findNaturalHostileY(x, z)
       if (baseY === null) continue
 
       let packSize = entry.minPack + Math.floor(Math.random() * (entry.maxPack - entry.minPack + 1))
@@ -162,15 +162,14 @@ export function installEntityManagerSpawning(EntityManagerClass: EntityManagerCo
     }
     return candidates.length > 0 ? candidates[Math.floor(Math.random() * candidates.length)] : null
   }
-  prototype.findNaturalHostileY = function(this: EntityManager, x: number, z: number, surfaceY: number): number | null {
-    const maxY = Math.min(127, Math.max(1, surfaceY))
-    for (let attempt = 0; attempt < 12; attempt++) {
-      const y = attempt === 11 ? surfaceY : 1 + Math.floor(Math.random() * maxY)
-      if (y < 1 || y >= 127 || !this.world.isSolid(x, y - 1, z)) continue
-      if (isFluid(this.world.getBlock(x, y - 1, z)) || this.world.isSolid(x, y, z)) continue
-      return y
-    }
-    return null
+  prototype.findNaturalHostileY = function(this: EntityManager, x: number, z: number): number | null {
+    // SpawnerAnimals.getRandomSpawningPointInChunk chooses one uniform Y in
+    // 0..127. It never falls back to the surface; that fallback concentrated
+    // nearly the whole monster cap outdoors in a single spawn pass.
+    const y = Math.floor(Math.random() * 128)
+    if (y < 1 || y >= 127 || !this.world.isSolid(x, y - 1, z)) return null
+    if (isFluid(this.world.getBlock(x, y - 1, z)) || this.world.isSolid(x, y, z)) return null
+    return y
   }
   prototype.serialize = function(this: EntityManager): SavedEntity[] {
     return [...this.entities.values()].filter(entity => entity.health > 0).map(entity => ({

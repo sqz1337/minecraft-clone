@@ -7,6 +7,8 @@ import { EntityView, BoxUv, TEXTURE_WIDTH, TEXTURE_HEIGHT, PROFESSION_TEXTURES, 
 import type { EntityRenderer } from './EntityRenderer'
 
 type EntityRendererConstructor = { prototype: EntityRenderer }
+const skeletonBowEuler = new THREE.Euler()
+const skeletonBowQuaternion = new THREE.Quaternion()
 
 export function installEntityRendererSync(EntityRendererClass: EntityRendererConstructor): void {
   const prototype = EntityRendererClass.prototype
@@ -90,6 +92,11 @@ export function installEntityRendererSync(EntityRendererClass: EntityRendererCon
       view.walkPhase += dt * (3 + speed * 7)
       const maxSwing = entity.kind === 'enderman' ? 0.4 : 0.75
       const swing = Math.sin(view.walkPhase) * Math.min(maxSwing, speed * 0.28)
+      const relativeHeadYaw = Math.atan2(
+        Math.sin(entity.headYaw - entity.yaw), Math.cos(entity.headYaw - entity.yaw)
+      )
+      const clampedHeadYaw = Math.max(-1.3, Math.min(1.3, relativeHeadYaw))
+      const animatedHeadPitch = entity.headPitch + Math.sin(view.walkPhase * 0.18) * 0.08
       for (let i = 0; i < view.legs.length; i++) {
         const leg = view.legs[i]
         if (entity.kind === 'spider') {
@@ -111,8 +118,13 @@ export function installEntityRendererSync(EntityRendererClass: EntityRendererCon
         arm.rotation.y = 0
         if (entity.kind === 'zombie') arm.rotation.x = 1.45 + (i % 2 ? swing : -swing) * 0.15
         else if (entity.kind === 'skeleton') {
-          arm.rotation.x = 1.25 + Math.sin(view.walkPhase * 0.35) * 0.08
-          arm.rotation.y = i === 0 ? -0.18 : 0.18
+          // ModelSkeleton always enables ModelBiped.aimedBow: both arms follow
+          // the head, with the drawing arm offset farther across the body.
+          arm.rotation.x = Math.PI / 2 - animatedHeadPitch +
+            (i === 0 ? 1 : -1) * Math.sin(view.walkPhase * 0.067) * 0.05
+          arm.rotation.y = clampedHeadYaw + (i === 0 ? -0.1 : 0.5)
+          arm.rotation.z = (i === 0 ? 1 : -1) *
+            (Math.cos(view.walkPhase * 0.09) * 0.05 + 0.05)
         }
         else if (entity.kind === 'enderman' && entity.carriedBlock !== null) {
           arm.rotation.x = 0.5
@@ -121,11 +133,16 @@ export function installEntityRendererSync(EntityRendererClass: EntityRendererCon
           arm.rotation.x = (i % 2 ? swing : -swing) * (entity.kind === 'enderman' ? 0.5 : 1)
         }
       }
-      const relativeHeadYaw = Math.atan2(
-        Math.sin(entity.headYaw - entity.yaw), Math.cos(entity.headYaw - entity.yaw)
-      )
-      view.head.rotation.y = Math.max(-1.3, Math.min(1.3, relativeHeadYaw))
-      view.head.rotation.x = entity.headPitch + Math.sin(view.walkPhase * 0.18) * 0.08
+      if (entity.kind === 'skeleton' && view.heldItem && view.arms[0]) {
+        // Keep the bow upright in model space while its attachment point follows
+        // the aimed right arm. RenderBiped achieves the same result with a stack
+        // of inverse item transforms after bipedRightArm.postRender().
+        skeletonBowEuler.set(-animatedHeadPitch, clampedHeadYaw - 0.15, -Math.PI / 4)
+        skeletonBowQuaternion.setFromEuler(skeletonBowEuler)
+        view.heldItem.quaternion.copy(view.arms[0].quaternion).invert().multiply(skeletonBowQuaternion)
+      }
+      view.head.rotation.y = clampedHeadYaw
+      view.head.rotation.x = animatedHeadPitch
       if (view.wings.length === 2) {
         const flap = 0.25 + Math.sin(entity.wingRotation) * 0.55
         view.wings[0].rotation.z = -flap

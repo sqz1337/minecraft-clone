@@ -96,9 +96,11 @@ export function installGameLoop(GameClass: GameConstructor): void {
     }
     return base
   }
-  prototype.respawnPlayer = function(this: Game): void {
+  prototype.handlePlayerDeath = function(this: Game): void {
+    if (this.state === 'dead') return
     this.entities.dismountRider()
     const deathX = this.player.pos.x, deathY = this.player.pos.y, deathZ = this.player.pos.z
+    const score = this.player.experienceTotal
     const deathXp = experienceAfterDeath(this.player.experienceTotal)
     this.player.setExperience(deathXp.retained)
     this.experienceOrbs.spawn(deathX, deathY + 0.5, deathZ, deathXp.dropped)
@@ -114,12 +116,85 @@ export function installGameLoop(GameClass: GameConstructor): void {
     }
     this.inventory.clear()
     this.equipment.restore([])
+    this.state = 'dead'
+    this.player.enabled = false
+    this.player.clearKeys()
+    this.interaction.primaryUp()
+    this.interaction.secondaryUp()
+    this.interaction.setFirstPersonVisible(false)
+    this.ui.hideSleep()
+    this.releaseMouseCapture()
+    this.ui.showDeath(score)
+  }
+  prototype.respawnPlayer = function(this: Game, resume = true): void {
+    if (this.state !== 'dead') return
+    if (this.personalSpawn) {
+      // getBlock intentionally returns air for unloaded chunks, so the bed
+      // region must exist before validating the saved respawn point.
+      this.world.ensureGeneratedAt(this.personalSpawn.x, this.personalSpawn.z, 2)
+    }
     const bedSpawn = this.personalSpawn ? this.safeSpawnByBed(this.personalSpawn) : null
     if (this.personalSpawn && !bedSpawn) this.personalSpawn = null
     const target = bedSpawn ?? this.worldSpawn
+    // Collision must be available before teleporting. Otherwise the player gets
+    // one or more physics frames in air while streaming catches up.
+    this.world.ensureGeneratedAt(target.x, target.z, 2)
     this.player.teleport(target.x, target.y, target.z, 0)
     this.player.resetAfterDeath()
-    this.ui.toast(bedSpawn ? 'You died — respawned beside your bed' : 'You died — items dropped at the death point')
+    this.interaction.setFirstPersonVisible(this.player.cameraMode === 'first')
+    this.state = 'ready'
+    this.ui.showGame()
+    this.ui.toast(bedSpawn ? 'Respawned beside your bed' : 'Respawned at the world spawn')
+    this.saveWorld()
+    if (resume) this.requestPlay()
+  }
+  prototype.tickSleep = function(this: Game, dt: number): void {
+    const sleep = this.sleepTransition
+    if (!sleep) return
+    const darkAt = 1.25, messageEnds = 3, wakeAt = 3.25, finish = 4.5
+    sleep.elapsed += dt
+    const ease = (value: number): number => {
+      const t = clamp(value, 0, 1)
+      return t * t * (3 - 2 * t)
+    }
+    if (sleep.elapsed < darkAt) {
+      this.camera.position.copy(sleep.bedPosition)
+      this.camera.quaternion.copy(sleep.bedQuaternion)
+      this.ui.setSleepProgress(ease(sleep.elapsed / darkAt))
+      return
+    }
+    this.env.timeOfDay = 0.25
+    if (sleep.elapsed < messageEnds) {
+      this.camera.position.copy(sleep.bedPosition)
+      this.camera.quaternion.copy(sleep.bedQuaternion)
+      this.ui.setSleepProgress(1, sleep.message)
+      return
+    }
+    if (sleep.elapsed < wakeAt) {
+      this.camera.position.copy(sleep.bedPosition)
+      this.camera.quaternion.copy(sleep.bedQuaternion)
+      this.ui.setSleepProgress(1)
+      return
+    }
+    if (!sleep.awake) {
+      const wake = this.safeSpawnByBed(sleep.head) ?? {
+        x: this.player.pos.x,
+        y: this.player.pos.y,
+        z: this.player.pos.z
+      }
+      this.player.teleport(wake.x, wake.y, wake.z, this.player.yaw, this.player.pitch)
+      sleep.awake = true
+    }
+    const t = ease((sleep.elapsed - wakeAt) / (finish - wakeAt))
+    this.ui.setSleepProgress(1 - t)
+    if (sleep.elapsed < finish) return
+    this.sleepTransition = null
+    this.state = 'playing'
+    this.player.enabled = true
+    this.interaction.setFirstPersonVisible(this.player.cameraMode === 'first')
+    this.ui.hideSleep()
+    this.ui.toast('Respawn point set')
+    this.saveWorld()
   }
   prototype.tickStructureSpawners = function(this: Game, dt: number): void {
     this.spawnerTimer -= dt
@@ -150,7 +225,9 @@ export function installGameLoop(GameClass: GameConstructor): void {
     const dt = clamp(this.clock.getDelta(), 0.0001, 0.05)
     U.uTime.value += dt
 
+    this.audio.updateMenuMusic(dt, this.state === 'title')
     if (this.state === 'title' || this.state === 'loading') return
+    if (this.state === 'sleeping') this.tickSleep(dt)
 
     const playing = this.state === 'playing'
     if (playing) {

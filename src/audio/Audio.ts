@@ -116,7 +116,7 @@ const SOUND_FILES = [
   ...STEP_KINDS.flatMap(stepPaths),
   'damage/fallbig1.ogg', 'damage/fallbig2.ogg', 'damage/fallsmall.ogg',
   'damage/hurtflesh1.ogg', 'damage/hurtflesh2.ogg', 'damage/hurtflesh3.ogg',
-  'liquid/splash.ogg', 'random/pop.ogg', 'random/click.ogg', 'random/break.ogg',
+  'liquid/splash.ogg', 'random/pop.ogg', 'random/click.ogg', 'random/break.ogg', 'random/burp.ogg',
   'random/door_open.ogg', 'random/door_close.ogg',
   'mob/enderman/portal.ogg', 'mob/enderman/portal2.ogg', 'mob/irongolem/throw.ogg',
   'random/bow.ogg', 'random/chestopen.ogg', 'random/fuse.ogg', 'random/orb.ogg',
@@ -137,10 +137,14 @@ export class AudioMan {
   private lowpass: BiquadFilterNode | null = null
   private rainGain: GainNode | null = null
   private rainSource: AudioBufferSourceNode | null = null
+  private calmSource: AudioBufferSourceNode | null = null
   private samples = new Map<string, AudioBuffer>()
-  private volume = 0.8
+  private soundVolume = 0.8
+  private musicVolume = 0.8
   private rainTarget = 0
   private musicTimer = 30 + Math.random() * 90
+  private menuMusic = false
+  private uiClickAudio: HTMLAudioElement | null = null
   private silentHillMode = false
   private silentHillSource: AudioBufferSourceNode | null = null
   private silentHillTrackIndex = Math.floor(Math.random() * SILENT_HILL_TRACKS.length)
@@ -159,9 +163,10 @@ export class AudioMan {
     this.lowpass.type = 'lowpass'
     this.lowpass.frequency.value = 20000
     this.master = ctx.createGain()
-    this.master.gain.value = this.volume
+    this.master.gain.value = 1
     for (const category of ['block', 'mob', 'player', 'weather', 'music', 'effects'] as const) {
       const bus = ctx.createGain()
+      bus.gain.value = category === 'music' ? this.musicVolume : this.soundVolume
       bus.connect(this.master)
       this.buses.set(category, bus)
     }
@@ -203,6 +208,7 @@ export class AudioMan {
   setSilentHillMode(enabled: boolean): void {
     this.silentHillMode = enabled
     this.musicTimer = 30 + Math.random() * 90
+    if (enabled) this.stopCalmMusic()
     if (!enabled) {
       const source = this.silentHillSource
       this.silentHillSource = null
@@ -235,6 +241,46 @@ export class AudioMan {
       this.silentHillGap = 1.5
     }
     source.start()
+  }
+
+  private stopCalmMusic(): void {
+    const source = this.calmSource
+    this.calmSource = null
+    if (!source) return
+    source.onended = null
+    try { source.stop() } catch { /* it may have ended between frames */ }
+  }
+
+  private startCalmMusic(): boolean {
+    if (!this.ctx || !this.master || this.calmSource || this.silentHillMode) return false
+    const tracks = ['music/calm1.ogg', 'music/calm2.ogg', 'music/calm3.ogg'] as const
+    const available = tracks.filter(path => this.samples.has(path))
+    if (available.length === 0) return false
+    const source = this.ctx.createBufferSource()
+    source.buffer = this.samples.get(available[Math.floor(Math.random() * available.length)])!
+    const gain = this.ctx.createGain()
+    gain.gain.value = 0.22
+    source.connect(gain)
+    gain.connect(this.buses.get('music') ?? this.master)
+    this.calmSource = source
+    source.onended = () => {
+      if (this.calmSource !== source) return
+      this.calmSource = null
+      this.musicTimer = this.menuMusic ? 8 + Math.random() * 18 : 180 + Math.random() * 360
+    }
+    source.start()
+    return true
+  }
+
+  /** Keeps the classic calm soundtrack alive on the title screen after the first user gesture. */
+  updateMenuMusic(dt: number, active: boolean): void {
+    if (active !== this.menuMusic) {
+      this.menuMusic = active
+      if (active) this.musicTimer = 0
+    }
+    if (!active || this.silentHillMode || this.calmSource) return
+    this.musicTimer -= dt
+    if (this.musicTimer <= 0) this.startCalmMusic()
   }
 
   /**
@@ -345,9 +391,12 @@ export class AudioMan {
     return 'stone'
   }
 
-  setVolume(value: number): void {
-    this.volume = value
-    if (this.master) this.master.gain.value = value
+  setVolumes(sound: number, music: number): void {
+    this.soundVolume = clamp(sound, 0, 1)
+    this.musicVolume = clamp(music, 0, 1)
+    for (const [category, bus] of this.buses) {
+      bus.gain.value = category === 'music' ? this.musicVolume : this.soundVolume
+    }
   }
 
   setUnderwater(underwater: boolean): void {
@@ -420,6 +469,19 @@ export class AudioMan {
     this.sample('random/click.ogg', 0.3)
   }
 
+  /** Uses the original click sample and an HTML-audio fallback while WebAudio is still loading. */
+  uiClick(): void {
+    if (this.sample('random/click.ogg', 0.3)) return
+    if (typeof Audio === 'undefined') return
+    if (!this.uiClickAudio) {
+      this.uiClickAudio = new Audio(SOUND_ROOT + 'random/click.ogg')
+      this.uiClickAudio.preload = 'auto'
+    }
+    this.uiClickAudio.volume = clamp(this.soundVolume * 0.38, 0, 1)
+    this.uiClickAudio.currentTime = 0
+    void this.uiClickAudio.play().catch(() => {})
+  }
+
   toolBreak(): void {
     this.sample('random/break.ogg', 0.5, 0.95 + Math.random() * 0.1)
   }
@@ -432,8 +494,17 @@ export class AudioMan {
     this.sample('random/bow.ogg', 0.35 + clamp(power, 0, 1) * 0.22, 0.9 + Math.random() * 0.12)
   }
 
+  mobBowShoot(position: SoundPosition): void {
+    // EntityAIArrowAttack: volume 1.0, pitch 1 / (random * 0.4 + 0.8).
+    this.sample('random/bow.ogg', 1, 1 / (Math.random() * 0.4 + 0.8), 0, position, 'mob')
+  }
+
   eat(): void {
-    this.sample(numberedPaths('random/eat', 3), 0.3, 0.9 + Math.random() * 0.18)
+    this.sample(numberedPaths('random/eat', 3), 0.5 + Math.random() * 0.5, 0.8 + Math.random() * 0.4)
+  }
+
+  burp(): void {
+    this.sample('random/burp.ogg', 0.5, 0.9 + Math.random() * 0.1)
   }
 
   chestOpen(): void {
@@ -471,18 +542,18 @@ export class AudioMan {
 
   updateAmbience(dt: number, opts: { wind: number; rain: number; night: number; underwater: boolean; clear: boolean }): void {
     this.rainTarget = opts.underwater ? 0 : opts.rain * 0.2
-    if (!this.rainGain) return
-    const rain = this.rainGain.gain
-    rain.value += (this.rainTarget - rain.value) * clamp(dt * 1.5, 0, 1)
+    if (this.rainGain) {
+      const rain = this.rainGain.gain
+      rain.value += (this.rainTarget - rain.value) * clamp(dt * 1.5, 0, 1)
+    }
     if (this.silentHillMode) {
       this.silentHillGap = Math.max(0, this.silentHillGap - dt)
       if (this.silentHillGap === 0) this.startSilentHillMusic()
       return
     }
+    this.menuMusic = false
+    if (this.calmSource) return
     this.musicTimer -= dt
-    if (this.musicTimer <= 0) {
-      this.sample(['music/calm1.ogg', 'music/calm2.ogg', 'music/calm3.ogg'], 0.22, 1, 0, undefined, 'music')
-      this.musicTimer = 180 + Math.random() * 360
-    }
+    if (this.musicTimer <= 0) this.startCalmMusic()
   }
 }

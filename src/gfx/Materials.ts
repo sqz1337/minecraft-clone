@@ -27,7 +27,10 @@ export class Materials {
     // into vertex colors by the mesher, so per-pixel PBR buys nothing here.
     this.solid = new THREE.MeshLambertMaterial({
       map: atlas.colorTex,
-      vertexColors: true
+      vertexColors: true,
+      // Beds and doors live in the solid mesh but their classic terrain.png
+      // tiles contain real cutout pixels (not black geometry).
+      alphaTest: 0.42
     })
 
     this.foliage = new THREE.MeshLambertMaterial({

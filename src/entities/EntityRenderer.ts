@@ -63,11 +63,24 @@ export class EntityRenderer {
 
   mushroomMaterial: THREE.MeshLambertMaterial
 
-  bowMaterial = new THREE.MeshLambertMaterial({ color: 0x8a542f })
+  bowMaterial: THREE.MeshLambertMaterial
 
   constructor(scene: THREE.Scene, public atlas?: Atlas) {
       this.group.name = 'mob-entities'
       const loader = new THREE.TextureLoader()
+      const bowTexture = loader.load(`${import.meta.env.BASE_URL}assets/minecraft/textures/item/bow.png`)
+      bowTexture.colorSpace = THREE.SRGBColorSpace
+      bowTexture.magFilter = THREE.NearestFilter
+      bowTexture.minFilter = THREE.NearestFilter
+      bowTexture.generateMipmaps = false
+      this.textures.push(bowTexture)
+      this.bowMaterial = new THREE.MeshLambertMaterial({
+        map: bowTexture,
+        vertexColors: true,
+        transparent: true,
+        alphaTest: 0.1,
+        side: THREE.DoubleSide
+      })
       for (const kind of ['pig', 'cow', 'sheep', 'chicken'] as const) {
         this.materials.set(kind, this.mobMaterial(loader, `${kind}.png`))
       }
@@ -90,7 +103,7 @@ export class EntityRenderer {
         ['zombie', 'zombie.png'], ['skeleton', 'skeleton.png'], ['spider', 'spider.png'],
         ['creeper', 'creeper.png'], ['slime', 'slime.png'], ['enderman', 'enderman.png'],
         ['silverfish', 'silverfish.png']
-      ] as const) this.materials.set(kind, this.mobMaterial(loader, file, kind === 'slime'))
+      ] as const) this.materials.set(kind, this.mobMaterial(loader, file, kind === 'slime' || kind === 'skeleton'))
       this.sheepFurMaterial = this.mobMaterial(loader, 'sheep_fur.png', true)
       this.saddleMaterial = this.mobMaterial(loader, 'saddle.png', true)
       this.eyeMaterials.set('enderman', this.eyesMaterial(loader, 'enderman_eyes.png'))

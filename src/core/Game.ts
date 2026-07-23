@@ -41,7 +41,7 @@ import { experienceAfterDeath } from '../player/Experience'
 import { rollLoot } from '../world/Loot'
 import { HOSTILE_KINDS, MOB_KINDS, VILLAGER_PROFESSIONS, type HostileKind, type MobKind, type VillagerProfession } from '../entities/EntityTypes'
 import { VILLAGER_TRADES } from '../entities/Trades'
-import { GameState, SAVE_INTERVAL_SEC, OpenScreen } from './GameShared'
+import { GameState, SAVE_INTERVAL_SEC, OpenScreen, SleepTransition } from './GameShared'
 import { installGameLifecycle } from './GameLifecycle'
 import { installGameInput } from './GameInput'
 import { installGameScreens } from './GameScreens'
@@ -172,6 +172,8 @@ export class Game {
 
   personalSpawn: { x: number; y: number; z: number } | null = null
 
+  sleepTransition: SleepTransition | null = null
+
   worldSpawn = { x: 0, y: SEA_LEVEL + 1, z: 0 }
 
   sprites: ItemSprites
@@ -212,11 +214,10 @@ export class Game {
 
       this.atlas = atlas
       this.materials = new Materials(this.atlas)
+      this.audio.setVolumes(settings.soundVolume, settings.musicVolume)
 
       window.addEventListener('resize', () => this.onResize())
-      document.addEventListener('contextmenu', (e) => {
-        if (this.state === 'playing' || this.state === 'paused') e.preventDefault()
-      })
+      document.addEventListener('contextmenu', (e) => e.preventDefault())
       document.addEventListener('pointerlockchange', () => this.onPointerLockChange())
       window.addEventListener('blur', () => {
         if (isDesktopApp() && this.state === 'playing') this.pauseGame()
@@ -229,6 +230,15 @@ export class Game {
       ui.onQuitApplication = () => {
         if (isDesktopApp()) void desktopWorlds.quit()
         else window.close()
+      }
+      ui.onButtonClick = () => {
+        this.audio.init()
+        this.audio.uiClick()
+      }
+      ui.onRespawn = () => this.respawnPlayer()
+      ui.onDeathQuit = () => {
+        this.respawnPlayer(false)
+        void this.quitToTitle()
       }
       ui.onSettingsChanged = () => this.applySettings()
       ui.onFullscreenChanged = (fullscreen) => { void desktopWindow.fullscreen(fullscreen) }
@@ -286,6 +296,7 @@ export interface Game {
   initializeGeneratedChunk(cx: number, cz: number): void
   villagerProfessionAt(x: number, z: number): VillagerProfession
   useBed(hit: RayHit): void
+  tickSleep(dt: number): void
   safeSpawnByBed(bed: { x: number; y: number; z: number }): { x: number; y: number; z: number } | null
   useNavigationItem(itemId: number): void
   useMap(): void
@@ -319,7 +330,8 @@ export interface Game {
   recipeClick(index: number): void
   blockBroken(x: number, y: number, z: number, id: number): void
   serializeInventoryForSave(): SerializedInventory
-  respawnPlayer(): void
+  handlePlayerDeath(): void
+  respawnPlayer(resume?: boolean): void
   tickStructureSpawners(dt: number): void
   frame(): void
 }

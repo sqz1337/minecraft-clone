@@ -133,7 +133,8 @@ const TILE_SOURCES: readonly SourceTile[] = [
   [1, 10],  // brown wool
   [1, 9],   // green wool
   [1, 8],   // red wool
-  [1, 7]    // black wool
+  [1, 7],   // black wool
+  [3, 4]    // ice
 ]
 
 const GRASS_SIDE_OVERLAY: SourceTile = [6, 2]

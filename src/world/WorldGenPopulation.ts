@@ -20,6 +20,7 @@ import {
   type VillagerSpot
 } from './structures/StructureIndex'
 import { VILLAGE_SPACING } from './structures/Generators'
+import { vanillaBiomeInfo } from './VanillaBiomes'
 import { SEA_LEVEL, LEGACY_SEA_LEVEL, CURRENT_WORLD_GEN_VERSION, WorldGenVersion, JAVA_RANDOM_MULTIPLIER, JAVA_RANDOM_ADDEND, JAVA_RANDOM_MASK, SLIME_CHUNK_SALT, javaRandomNextInt10, isSlimeChunkForSeed, ColumnInfo, TreeKind, TreeDef, OreDef, ORE_DEFS } from './WorldGenShared'
 import type { WorldGen } from './WorldGen'
 
@@ -28,92 +29,30 @@ type WorldGenConstructor = { prototype: WorldGen }
 export function installWorldGenPopulation(WorldGenClass: WorldGenConstructor): void {
   const prototype = WorldGenClass.prototype
   prototype.fillChunk = function(this: WorldGen, chunk: Chunk): void {
-    const bx = chunk.cx * CHUNK_SIZE
-    const bz = chunk.cz * CHUNK_SIZE
-    const blocks = chunk.blocks
-    const seed = this.seedNum
-
-    if (this.generatorVersion >= 3) {
-      this.densityTerrain.copyInto(chunk)
-    } else for (let lx = 0; lx < CHUNK_SIZE; lx++) {
-      for (let lz = 0; lz < CHUNK_SIZE; lz++) {
-        const wx = bx + lx, wz = bz + lz
-        const info = this.columnInfo(wx, wz)
-        const h = info.height
-        const biome = info.biome
-        const col = ((lx << 4) | lz) << 7
-        chunk.colBiome[(lx << 4) | lz] = biome
-        chunk.colHeight[(lx << 4) | lz] = h
-
-        const { top, under, underDepth } = this.surfaceMaterials(wx, wz, info)
-
-        const bedrockH = 1 + (hash2(wx, wz, seed ^ 0x5555) % 2)
-        for (let y = 0; y <= h; y++) {
-          let id: number
-          if (y <= bedrockH) id = B.BEDROCK
-          else if (y === h) id = top
-          else if (y >= h - underDepth) id = under
-          else id = B.STONE
-          blocks[col | y] = id
-        }
-
-        // water fill
-        if (h < this.seaLevel) {
-          for (let y = h + 1; y <= this.seaLevel; y++) blocks[col | y] = B.WATER
-        }
-
-        // Generator v1 is retained for historical sparse-edit saves. New worlds
-        // replay recursive cross-chunk plans after all base columns exist.
-        if (this.generatorVersion === 1 && h >= this.seaLevel + 2) {
-          // Most tunnels stay underground; rare matching surface samples extend
-          // the same noise-carved tunnel outside as a natural cave entrance.
-          const surfaceCave1 = Math.abs(this.cave1.noise3(wx * 0.017, h * 0.024, wz * 0.017))
-          const surfaceCave2 = Math.abs(this.cave2.noise3(wx * 0.017, h * 0.024, wz * 0.017))
-          const opensToSurface = surfaceCave1 < 0.065 && surfaceCave2 < 0.065
-          const yTop = Math.min(opensToSurface ? h : h - 7, 90)
-          for (let y = 5; y <= yTop; y++) {
-            const n1 = Math.abs(this.cave1.noise3(wx * 0.017, y * 0.024, wz * 0.017))
-            if (n1 > 0.1) continue
-            const n2 = Math.abs(this.cave2.noise3(wx * 0.017, y * 0.024, wz * 0.017))
-            if (n2 < 0.1) blocks[col | y] = B.AIR
-          }
-        }
-
-        if (this.generatorVersion === 1) {
-          this.decorateLegacyColumn(chunk, lx, lz, top, h, biome, true)
-        }
-      }
-    }
-
-    if (this.generatorVersion >= 2) {
-      this.carvers.carveChunk(chunk, this)
-      if (this.generatorVersion === 2) {
-        for (let lx = 0; lx < CHUNK_SIZE; lx++) for (let lz = 0; lz < CHUNK_SIZE; lz++) {
-          const wx = bx + lx, wz = bz + lz
-          const info = this.columnInfo(wx, wz)
-          const { top } = this.surfaceMaterials(wx, wz, info)
-          this.decorateLegacyColumn(chunk, lx, lz, top, info.height, info.biome, false)
-        }
-      }
-    }
-
-    if (this.generatorVersion >= 3) {
-      // Classic population order: minable ellipsoids precede biome vegetation.
-      this.oreGenerator.stampChunk(chunk)
-      this.biomeDecorator.decorateChunk(chunk, this)
-    } else {
-      // Frozen v1/v2 population baseline for sparse-edit saves.
-      this.stampOres(chunk)
-      for (let tx = bx - 3; tx < bx + CHUNK_SIZE + 3; tx++) {
-        for (let tz = bz - 3; tz < bz + CHUNK_SIZE + 3; tz++) {
-          const tree = this.treeAt(tx, tz)
-          if (tree) this.stampTree(chunk, tree)
-        }
-      }
-    }
-
-    // structures carve last so their interiors stay clear of terrain and trees
+    this.densityTerrain.copyInto(chunk)
+    this.carvers.carveChunk(chunk, this)
+    // Vanilla population starts with structure finalization, then lakes.
+    // Lake plans are destination-replayed to preserve chunk-border geometry.
     this.stampStructures(chunk)
+    this.lakes.stampChunk(chunk, this)
+    this.oreGenerator.stampChunk(chunk)
+    this.biomeDecorator.decorateChunk(chunk, this)
+    for (let lx = 0; lx < CHUNK_SIZE; lx++) for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      const wx = chunk.cx * CHUNK_SIZE + lx, wz = chunk.cz * CHUNK_SIZE + lz
+      const sample = this.densityTerrain.biomeSource.sample(wx, wz)
+      if (sample.vanillaBiome === undefined ||
+        vanillaBiomeInfo(sample.vanillaBiome).temperature > Math.fround(0.15)) continue
+      for (let y = WORLD_HEIGHT - 1; y >= 0; y--) {
+        const index = Chunk.index(lx, y, lz)
+        const block = chunk.blocks[index]
+        if (block === B.AIR) continue
+        if (block === B.WATER) {
+          chunk.blocks[index] = B.ICE
+          chunk.colHeight[(lx << 4) | lz] = Math.max(chunk.colHeight[(lx << 4) | lz], y)
+        }
+        break
+      }
+    }
 
     chunk.state = 1
   }

@@ -120,7 +120,6 @@ select option { background: #0d1420; }
 
 /* ---------- classic desktop menus ---------- */
 
-#title,
 .menu-screen {
   background-color: #4d4d4d;
   background-image:
@@ -199,11 +198,141 @@ select option { background: #0d1420; }
   background: linear-gradient(#a84a4a, #782b2b);
 }
 
-.title-inner { max-width: 520px; }
-.title-form { margin-top: 42px; }
-.game-title { text-shadow: none; }
-.tagline { color: #ffff55; text-shadow: 2px 2px #3f3f00; }
-.footnote { color: #bdbdbd; text-shadow: 1px 1px #333; }
+/* ---------- cinematic title menu ---------- */
+
+#title {
+  isolation: isolate;
+  overflow: hidden;
+  background-color: #17221c;
+  background-image: url('/assets/realmcraft/title/menu-background.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+#title::before,
+#title::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  content: '';
+  pointer-events: none;
+}
+
+#title::before {
+  background:
+    linear-gradient(180deg, rgba(8, 12, 18, 0.08) 0%, transparent 31%, rgba(4, 8, 11, 0.2) 72%, rgba(3, 6, 8, 0.65) 100%),
+    radial-gradient(ellipse at center, transparent 34%, rgba(2, 5, 8, 0.28) 100%);
+}
+
+#title::after {
+  opacity: 0.16;
+  background-image: url('/assets/minecraft/gui/background.png');
+  background-size: 96px 96px;
+  mix-blend-mode: soft-light;
+}
+
+.title-inner {
+  position: absolute;
+  top: 8vh;
+  left: 50%;
+  display: flex;
+  width: min(430px, 82vw);
+  max-width: none;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: center;
+  transform: translateX(-50%);
+}
+
+.title-brand { position: relative; }
+
+.game-title {
+  position: static;
+  left: auto;
+  width: auto;
+  margin: 0 -18vw;
+  transform: none;
+  color: #86bb29;
+  background: linear-gradient(180deg, #d7ef54 5%, #9bc52d 42%, #5d8617 72%, #3b5b0d 100%);
+  background-clip: text;
+  filter: drop-shadow(0 7px 2px rgba(0, 0, 0, 0.75));
+  font-family: Impact, Haettenschweiler, 'Arial Black', sans-serif;
+  font-size: clamp(52px, 8.2vw, 110px);
+  font-weight: 900;
+  letter-spacing: 0.025em;
+  line-height: 0.86;
+  text-shadow:
+    -2px -2px 0 #182307,
+    2px -2px 0 #182307,
+    -2px 2px 0 #182307,
+    2px 2px 0 #182307,
+    0 4px 0 #263608,
+    0 7px 0 #111a04;
+  -webkit-background-clip: text;
+  -webkit-text-stroke: 1px rgba(18, 25, 4, 0.85);
+}
+
+.tagline {
+  position: relative;
+  z-index: 1;
+  width: max-content;
+  margin: clamp(7px, 1.2vh, 12px) auto 0;
+  color: #ffd83d;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: clamp(9px, 1.25vw, 13px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-shadow:
+    -1px -1px 0 #3b2200,
+    1px -1px 0 #3b2200,
+    -1px 1px 0 #3b2200,
+    1px 1px 0 #3b2200,
+    0 2px 0 #241300;
+}
+
+.title-form {
+  width: 100%;
+  margin-top: clamp(90px, 18vh, 200px);
+  gap: clamp(5px, 0.9vh, 9px);
+}
+
+#title .btn {
+  min-height: clamp(27px, 5.7vh, 46px);
+  padding: 7px 14px;
+  border-color: #b7b7b7 #202020 #202020 #b7b7b7;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.09)),
+    linear-gradient(#686868, #505050);
+  box-shadow:
+    inset 0 0 0 2px #606060,
+    0 2px 5px rgba(0, 0, 0, 0.48);
+  font-size: clamp(12px, 1.25vw, 16px);
+}
+
+#title .btn:hover:not(:disabled) {
+  border-color: #cbd4ff #273662 #273662 #cbd4ff;
+  background: linear-gradient(#7c85ba, #566093);
+}
+
+#title .btn:disabled {
+  opacity: 0.72;
+  color: #b8b8b8;
+}
+
+.footnote {
+  position: absolute;
+  right: 12px;
+  bottom: 11px;
+  left: 12px;
+  margin: 0;
+  color: rgba(240, 240, 240, 0.76);
+  font: 11px/1.2 ui-monospace, Consolas, monospace;
+  letter-spacing: 0;
+  text-align: center;
+  text-shadow: 1px 1px 2px #000;
+}
 
 .world-menu {
   position: relative;
@@ -319,8 +448,17 @@ select option { background: #000; }
 .confirm-panel .warning { margin-bottom: 28px; color: #ff5555; }
 
 @media (max-height: 620px) {
-  .game-title { font-size: 44px; }
-  .title-form { margin-top: 24px; }
+  .title-inner { top: 5vh; }
+  .game-title { font-size: clamp(44px, 9.5vh, 58px); }
+  .title-form {
+    margin-top: clamp(14px, 3.5vh, 24px);
+    gap: 4px;
+  }
+  #title .btn { padding: 3px 12px; }
+  .footnote {
+    bottom: 4px;
+    font-size: 8px;
+  }
   .world-list { height: 300px; }
 }
 
@@ -349,9 +487,38 @@ select option { background: #000; }
 
 /* ---------- pause ---------- */
 
+#pause { backdrop-filter: none; }
 .pause-inner { text-align: center; width: min(400px, 90%); }
 .pause-inner h2 { letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 24px; }
 .pause-buttons { display: flex; flex-direction: column; gap: 10px; }
+
+/* ---------- death ---------- */
+
+.death-screen {
+  z-index: 70;
+  background:
+    radial-gradient(ellipse at center, rgba(120, 0, 0, 0.16), rgba(70, 0, 0, 0.52)),
+    rgba(70, 0, 0, 0.24);
+  backdrop-filter: grayscale(0.42) brightness(0.72);
+}
+
+.death-inner {
+  width: min(420px, 88vw);
+  color: #fff;
+  font-family: ui-monospace, Consolas, monospace;
+  text-align: center;
+  text-shadow: 2px 2px #3f0000;
+}
+
+.death-inner h2 {
+  margin-bottom: 18px;
+  font-size: clamp(34px, 5vw, 54px);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.death-inner p { margin-bottom: 46px; color: #ffff55; font-size: 18px; }
+.death-buttons { display: flex; flex-direction: column; gap: 10px; }
 
 .panel {
   margin-top: 18px;
@@ -1161,6 +1328,34 @@ select option { background: #000; }
   35% { opacity: 0.48; }
   100% { opacity: 0; }
 }
+
+#sleep-overlay {
+  --sleep-opacity: 0;
+  position: fixed;
+  inset: 0;
+  z-index: 26;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: var(--sleep-opacity);
+  background:
+    radial-gradient(ellipse at center, rgba(8, 12, 22, 0.6), rgba(0, 0, 0, 0.97)),
+    rgba(0, 0, 0, 0.7);
+}
+
+#sleep-overlay.hidden { display: none; }
+.sleep-message {
+  opacity: 0;
+  color: rgba(255, 255, 255, 0.78);
+  font: 16px/1 ui-monospace, Consolas, monospace;
+  text-align: center;
+  text-shadow: 2px 2px #000;
+  transition: opacity 0.2s;
+}
+.sleep-message.visible { opacity: 1; }
+#hud.sleeping #crosshair,
+#hud.sleeping #hotbar-wrap,
+#hud.sleeping #info { opacity: 0; }
 
 #vignette {
   position: fixed; inset: 0;

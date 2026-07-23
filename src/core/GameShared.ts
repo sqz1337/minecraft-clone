@@ -42,7 +42,18 @@ import { rollLoot } from '../world/Loot'
 import { HOSTILE_KINDS, MOB_KINDS, VILLAGER_PROFESSIONS, type HostileKind, type MobKind, type VillagerProfession } from '../entities/EntityTypes'
 import { VILLAGER_TRADES } from '../entities/Trades'
 
-export type GameState = 'title' | 'loading' | 'ready' | 'playing' | 'paused' | 'inventory' | 'chat'
+export type GameState =
+  | 'title' | 'loading' | 'ready' | 'playing' | 'paused' | 'inventory' | 'chat'
+  | 'sleeping' | 'dead'
+export interface SleepTransition {
+  elapsed: number
+  head: { x: number; y: number; z: number }
+  facing: 0 | 1 | 4 | 5
+  bedPosition: THREE.Vector3
+  bedQuaternion: THREE.Quaternion
+  message: string
+  awake: boolean
+}
 export const SAVE_INTERVAL_SEC = 8
 export type OpenScreen =
   | { kind: 'inventory'; crafting: Crafting }

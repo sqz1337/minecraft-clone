@@ -37,7 +37,8 @@ test('decorator blocks append stable contiguous ids without renumbering monster 
     B.REDSTONE_ORE, B.LAPIS_ORE, B.CLAY, B.DEAD_BUSH, B.CACTUS,
     B.WATER_LILY, B.VINE, B.BIRCH_LOG, B.BIRCH_LEAVES, B.SAPLING_BIRCH
   ], [88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100])
-  assert.equal(BLOCKS.length, 116)
+  assert.equal(B.ICE, 116)
+  assert.equal(BLOCKS.length, 117)
 })
 
 test('new block definitions carry classic mining, drops and render classifications', () => {
@@ -75,6 +76,8 @@ test('new block definitions carry classic mining, drops and render classificatio
   assert.equal(OPAQUE[B.CACTUS], false)
   assert.equal(CROSS[B.WATER_LILY], true)
   assert.equal(CROSS[B.VINE], true)
+  assert.equal(SOLID[B.ICE], true)
+  assert.equal(OPAQUE[B.ICE], false)
 })
 
 test('redstone, clay and metadata-free lapis items use stable ids and classic sprites', () => {
@@ -104,7 +107,7 @@ test('terrain tiles preserve all documented classic source coordinates', () => {
     ['3, 3', 'redstone ore'], ['0, 10', 'lapis lazuli ore'], ['8, 4', 'clay'],
     ['7, 3', 'dead bush'], ['6, 4', 'cactus side'], ['5, 4', 'cactus top'],
     ['7, 4', 'cactus bottom'], ['12, 4', 'lily pad'], ['15, 8', 'vines'],
-    ['5, 7', 'birch log side'], ['15, 4', 'birch sapling']
+    ['5, 7', 'birch log side'], ['15, 4', 'birch sapling'], ['3, 4', 'ice']
   ]) assert.match(atlas, new RegExp(`\\[${coord}\\],?\\s*// ${comment}`))
 })
 

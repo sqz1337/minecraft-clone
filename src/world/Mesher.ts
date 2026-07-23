@@ -388,7 +388,8 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
         }
 
         const isLeaf = isLeafBlock(id)
-        const target = isLeaf ? foliage : id === B.GLASS ? glass : solid
+        const isGlassLike = id === B.GLASS || id === B.ICE
+        const target = isLeaf ? foliage : isGlassLike ? glass : solid
         const facing: HorizontalFace = facings?.get(colBase | y) ?? 4
         // subtle per-block value variation breaks up flat regions
         const vary = 0.92 + hash301(wx, y, wz, seed ^ 0xc0de) * 0.14
@@ -396,7 +397,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
         for (let f = 0; f < 6; f++) {
           const fd = FACES[f]
           const nb = sample(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
-          if (id === B.GLASS && nb === B.GLASS) continue
+          if (isGlassLike && nb === id) continue
           if (OPAQUE[nb]) continue
           if (isLeaf && nb === id) continue
 

@@ -313,7 +313,7 @@ test('plan caches and recursive geometry stay within explicit hard bounds', () =
   })
 })
 
-test('WorldGen v2 integrates map carvers without chunk load-order seams', () => {
+test('WorldGen v4 integrates map carvers without chunk load-order seams', () => {
   const forward = new WorldGen('integrated-carvers', 2)
   const reverse = new WorldGen('integrated-carvers', 2)
   const leftForward = new Chunk(-1, 0), rightForward = new Chunk(0, 0)
@@ -330,25 +330,18 @@ test('WorldGen v2 integrates map carvers without chunk load-order seams', () => 
   assert.deepEqual(rightForward.colBiome, rightReverse.colBiome)
 })
 
-test('legacy saves retain v1/v2 while new worlds select the v3 population baseline', () => {
-  assert.equal(CURRENT_WORLD_GEN_VERSION, 3)
-  assert.equal(new WorldGen('version-default').generatorVersion, 3)
-  assert.equal(new WorldGen('version-default', 1).generatorVersion, 1)
-  assert.equal(new WorldGen('version-default', 2).generatorVersion, 2)
+test('all saves select the v4 Java-compatible population baseline', () => {
+  assert.equal(CURRENT_WORLD_GEN_VERSION, 4)
+  assert.equal(new WorldGen('version-default').generatorVersion, 4)
+  assert.equal(new WorldGen('version-default', 1).generatorVersion, 4)
+  assert.equal(new WorldGen('version-default', 2).generatorVersion, 4)
+  assert.equal(new WorldGen('version-default', 3).generatorVersion, 4)
 
-  let changed = false
-  const legacy = new WorldGen('versioned-carvers', 1)
-  const legacyRepeat = new WorldGen('versioned-carvers', 1)
-  const current = new WorldGen('versioned-carvers', 3)
-  for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) {
-    const oldChunk = new Chunk(cx, cz)
-    const repeated = new Chunk(cx, cz)
-    const newChunk = new Chunk(cx, cz)
-    legacy.fillChunk(oldChunk)
-    legacyRepeat.fillChunk(repeated)
-    current.fillChunk(newChunk)
-    assert.deepEqual(oldChunk.blocks, repeated.blocks)
-    if (!changed) changed = Buffer.compare(oldChunk.blocks, newChunk.blocks) !== 0
-  }
-  assert.ok(changed, 'v3 must use the recursive cave/ravine/lake baseline instead of legacy noise caves')
+  const upgraded = new WorldGen('versioned-carvers', 1)
+  const current = new WorldGen('versioned-carvers', 4)
+  const upgradedChunk = new Chunk(0, 0)
+  const currentChunk = new Chunk(0, 0)
+  upgraded.fillChunk(upgradedChunk)
+  current.fillChunk(currentChunk)
+  assert.deepEqual(upgradedChunk.blocks, currentChunk.blocks)
 })

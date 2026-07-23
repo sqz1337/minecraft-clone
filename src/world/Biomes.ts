@@ -65,28 +65,25 @@ export const GRASS_TINT: readonly (readonly [number, number, number])[] = Object
   [0.58, 0.62, 0.58]  // mushroom island
 ])
 
-/**
- * Vanilla-shaped terrain parameters.  They deliberately describe the broad
- * 1.2-era silhouette without claiming Java seed compatibility.
- */
+/** Minecraft 1.2.5 BiomeGenBase minHeight/maxHeight values. */
 export interface BiomeTerrainProfile {
   readonly rootHeight: number
   readonly variation: number
 }
 
 export const BIOME_TERRAIN_PROFILES: Readonly<Record<BiomeId, BiomeTerrainProfile>> = Object.freeze({
-  [BIOME.OCEAN]: Object.freeze({ rootHeight: -1.0, variation: 0.10 }),
-  [BIOME.BEACH]: Object.freeze({ rootHeight: 0.0, variation: 0.025 }),
-  [BIOME.PLAINS]: Object.freeze({ rootHeight: 0.125, variation: 0.05 }),
-  [BIOME.FOREST]: Object.freeze({ rootHeight: 0.10, variation: 0.20 }),
-  [BIOME.DESERT]: Object.freeze({ rootHeight: 0.125, variation: 0.05 }),
-  [BIOME.MOUNTAIN]: Object.freeze({ rootHeight: 1.0, variation: 0.50 }),
-  [BIOME.SNOW]: Object.freeze({ rootHeight: 0.125, variation: 0.05 }),
+  [BIOME.OCEAN]: Object.freeze({ rootHeight: -1.0, variation: 0.40 }),
+  [BIOME.BEACH]: Object.freeze({ rootHeight: 0.0, variation: 0.10 }),
+  [BIOME.PLAINS]: Object.freeze({ rootHeight: 0.10, variation: 0.30 }),
+  [BIOME.FOREST]: Object.freeze({ rootHeight: 0.10, variation: 0.30 }),
+  [BIOME.DESERT]: Object.freeze({ rootHeight: 0.10, variation: 0.20 }),
+  [BIOME.MOUNTAIN]: Object.freeze({ rootHeight: 0.20, variation: 1.30 }),
+  [BIOME.SNOW]: Object.freeze({ rootHeight: 0.10, variation: 0.30 }),
   [BIOME.RIVER]: Object.freeze({ rootHeight: -0.50, variation: 0.00 }),
-  [BIOME.TAIGA]: Object.freeze({ rootHeight: 0.20, variation: 0.20 }),
+  [BIOME.TAIGA]: Object.freeze({ rootHeight: 0.10, variation: 0.40 }),
   [BIOME.SWAMP]: Object.freeze({ rootHeight: -0.20, variation: 0.10 }),
-  [BIOME.JUNGLE]: Object.freeze({ rootHeight: 0.10, variation: 0.40 }),
-  [BIOME.MUSHROOM]: Object.freeze({ rootHeight: 0.20, variation: 0.30 })
+  [BIOME.JUNGLE]: Object.freeze({ rootHeight: 0.20, variation: 0.40 }),
+  [BIOME.MUSHROOM]: Object.freeze({ rootHeight: 0.20, variation: 1.00 })
 })
 
 export function isBiomeId(value: number): value is BiomeId {

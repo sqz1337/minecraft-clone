@@ -101,7 +101,7 @@ test('desktop shell exposes menus and native world commands', () => {
 test('controls, display options and fullscreen persist through Settings', () => {
   installStorage()
   const settings = new Settings()
-  assert.ok(CONTROL_DEFINITIONS.length >= 18)
+  assert.ok(CONTROL_DEFINITIONS.length >= 17)
   assert.equal(settings.key('forward'), 'KeyW')
   assert.equal(settings.setKey('forward', 'KeyI'), true)
   assert.equal(settings.setKey('jump', 'Escape'), false)
@@ -109,6 +109,8 @@ test('controls, display options and fullscreen persist through Settings', () => 
   settings.fov = 92
   settings.mouseSensitivity = 0.75
   settings.invertMouse = true
+  settings.soundVolume = 0.65
+  settings.musicVolume = 0.25
   settings.save()
 
   const restored = new Settings()
@@ -118,6 +120,8 @@ test('controls, display options and fullscreen persist through Settings', () => 
   assert.equal(restored.fov, 92)
   assert.equal(restored.mouseSensitivity, 0.75)
   assert.equal(restored.invertMouse, true)
+  assert.equal(restored.soundVolume, 0.65)
+  assert.equal(restored.musicVolume, 0.25)
   restored.resetKeys()
   assert.equal(restored.key('forward'), 'KeyW')
 })

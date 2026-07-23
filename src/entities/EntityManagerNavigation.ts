@@ -9,7 +9,7 @@ import { I } from '../world/ItemIds'
 import { explosionDamage } from '../player/Combat'
 import { EntityRenderer } from './EntityRenderer'
 import {
-  canOccupyNode, findPath, nodeCenter, nodeForPosition,
+  canOccupyNode, canTravelDirectly, findPath, nodeCenter, nodeForPosition,
   type NavNode, type NavProfile
 } from './Pathfinder'
 import {
@@ -114,6 +114,7 @@ export function installEntityManagerNavigation(EntityManagerClass: EntityManager
   prototype.navigate = function(this: EntityManager, entity: EntityState, goalX: number, goalY: number, goalZ: number, speed: number, dt: number, doorMode: 'none' | 'open' | 'break' = 'none', avoidWater = false): boolean {
     const profile = this.navigationProfile(entity, doorMode !== 'none', !avoidWater)
     const desired = nodeForPosition(goalX, goalY, goalZ, profile)
+    let plannedThisTick = false
 
     if (this.simulationTick >= entity.navProgressAt) {
       const moved = Math.hypot(
@@ -167,20 +168,42 @@ export function installEntityManagerNavigation(EntityManagerClass: EntityManager
       entity.navIndex = entity.navPath.length > 1 ? 1 : entity.navPath.length
       entity.navRequested = desired
       entity.navGoal = resolvedGoal
-      entity.nextPathAt = this.simulationTick + TARGET_SCAN_MIN_TICKS +
-        Math.floor(Math.random() * TARGET_SCAN_JITTER_TICKS)
+      plannedThisTick = true
+      // Vanilla pursuit recalculates in 4-10 ticks. Wandering can keep the
+      // cheaper general cadence because its destination is not moving.
+      entity.nextPathAt = this.simulationTick + (entity.targetId !== null
+        ? 4 + Math.floor(Math.random() * 7)
+        : TARGET_SCAN_MIN_TICKS + Math.floor(Math.random() * TARGET_SCAN_JITTER_TICKS))
       next = entity.navPath[entity.navIndex]
     }
 
+    const arrivalRadius = Math.max(0.32, profile.width)
     while (next) {
       const center = nodeCenter(next, profile)
+      // A wider vanilla-style arrival radius must never advance past a closed
+      // door before the open/break action below has completed.
+      if (next.terrain === 'door' &&
+        this.world.doorState?.(next.x, next.y, next.z) === 'closed') break
       // Swimming bodies bob around the liquid surface and can be more than half
       // a block above the discrete water node. Horizontal arrival is sufficient
       // there; requiring the feet Y to match leaves mobs circling waypoint one.
       const verticalReached = next.terrain === 'water' || Math.abs(center.y - entity.y) <= 0.65
-      if (Math.hypot(center.x - entity.x, center.z - entity.z) > 0.32 || !verticalReached) break
+      if (Math.hypot(center.x - entity.x, center.z - entity.z) > arrivalRadius || !verticalReached) break
       entity.navIndex++
       next = entity.navPath[entity.navIndex]
+    }
+
+    // PathNavigate skips to the furthest same-level node with a collision-free
+    // direct route. This removes the Manhattan staircase visible on open ground.
+    if (!plannedThisTick && next?.terrain === 'ground') {
+      for (let index = entity.navPath.length - 1; index > entity.navIndex; index--) {
+        const candidate = entity.navPath[index]
+        if (candidate.y !== next.y || candidate.terrain !== 'ground') continue
+        if (!canTravelDirectly(this.world, entity.x, entity.y, entity.z, candidate, profile)) continue
+        entity.navIndex = index
+        next = candidate
+        break
+      }
     }
 
     if (!next) {
@@ -255,15 +278,15 @@ export function installEntityManagerNavigation(EntityManagerClass: EntityManager
     entity.doorBreakY = 0
     entity.doorBreakZ = 0
   }
-  prototype.faceToward = function(this: EntityManager, entity: EntityState, targetYaw: number, dt: number, rate = 6): void {
+  prototype.faceToward = function(this: EntityManager, entity: EntityState, targetYaw: number, dt: number, rate = Math.PI * 10 / 3): void {
     const delta = Math.atan2(Math.sin(targetYaw - entity.yaw), Math.cos(targetYaw - entity.yaw))
     entity.yaw += clamp(delta, -rate * dt, rate * dt)
   }
   prototype.steer = function(this: EntityManager, entity: EntityState, goalX: number, goalZ: number, speed: number, dt: number): void {
     const dx = goalX - entity.x, dz = goalZ - entity.z, len = Math.hypot(dx, dz)
     if (len <= 0.25) { entity.vx *= 0.82; entity.vz *= 0.82; return }
-    entity.vx += (dx / len * speed - entity.vx) * clamp(dt * 4, 0, 1)
-    entity.vz += (dz / len * speed - entity.vz) * clamp(dt * 4, 0, 1)
+    entity.vx += (dx / len * speed - entity.vx) * clamp(dt * 8, 0, 1)
+    entity.vz += (dz / len * speed - entity.vz) * clamp(dt * 8, 0, 1)
     // Face where we are actually moving, not the raw goal. The goal direction
     // flips sign on tiny position noise when a mob is near/milling on its target,
     // which snapped the body left-right each tick; velocity carries momentum and
@@ -273,7 +296,7 @@ export function installEntityManagerNavigation(EntityManagerClass: EntityManager
     if (moveSpeed > 0.35) {
       const targetX = entity.vx / moveSpeed
       const targetZ = entity.vz / moveSpeed
-      const headingBlend = clamp(dt * 3, 0, 1)
+      const headingBlend = clamp(dt * 8, 0, 1)
       entity.headingX += (targetX - entity.headingX) * headingBlend
       entity.headingZ += (targetZ - entity.headingZ) * headingBlend
       const headingLength = Math.hypot(entity.headingX, entity.headingZ)

@@ -12,18 +12,18 @@
   <!-- Title screen -->
   <div id="title" class="screen">
     <div class="title-inner">
-      <h1 class="game-title">REALM<span>CRAFT</span></h1>
-      <p class="tagline">Java-style voxel edition</p>
+      <div class="title-brand">
+        <h1 class="game-title">REALMCRAFT</h1>
+        <p class="tagline">Java-style voxel edition</p>
+      </div>
       <div class="title-form menu-buttons">
         <button id="btn-singleplayer" class="btn">Singleplayer</button>
-        <button id="btn-title-options" class="btn">Options...</button>
-        <div class="menu-row">
-          <button id="btn-title-controls" class="btn">Controls</button>
-          <button id="btn-quit-game" class="btn">Quit Game</button>
-        </div>
+        <button id="btn-multiplayer" class="btn" disabled title="Multiplayer is not available yet">Multiplayer</button>
+        <button id="btn-title-options" class="btn">Options</button>
+        <button id="btn-quit-game" class="btn">Quit Game</button>
       </div>
-      <p class="footnote">Realmcraft 1.0 · local worlds</p>
     </div>
+    <p class="footnote">Realmcraft 1.0 &middot; local worlds</p>
   </div>
 
   <div id="world-select" class="screen hidden menu-screen">
@@ -101,9 +101,10 @@
     <div class="options-menu options-menu-wide sound-menu">
       <h2>Music &amp; Sound Options</h2>
       <div class="mc-options-grid">
-        <label class="mc-slider-option mc-wide-option"><span id="opt-volume-label">Master Volume: 100%</span><input id="opt-volume" type="range" min="0" max="1" step="0.05" /></label>
+        <label class="mc-slider-option"><span id="opt-sound-volume-label">Game Sound: 80%</span><input id="opt-sound-volume" type="range" min="0" max="1" step="0.05" /></label>
+        <label class="mc-slider-option"><span id="opt-music-volume-label">Music: 80%</span><input id="opt-music-volume" type="range" min="0" max="1" step="0.05" /></label>
       </div>
-      <p class="settings-note">Controls ambient sounds, blocks, creatures and interface effects.</p>
+      <p class="settings-note">Adjust gameplay sounds and background music independently.</p>
       <button id="btn-sound-done" class="btn btn-primary options-done">Done</button>
     </div>
   </div>
@@ -141,16 +142,25 @@
       <div class="pause-buttons">
         <button id="btn-resume" class="btn btn-primary">Back to Game</button>
         <button id="btn-save-world" class="btn">Save World</button>
-        <div class="menu-row">
-          <button id="btn-pause-options" class="btn">Options...</button>
-          <button id="btn-pause-controls" class="btn">Controls</button>
-        </div>
+        <button id="btn-pause-options" class="btn">Options...</button>
         <button id="btn-quit" class="btn">Save and Quit to Title</button>
       </div>
     </div>
   </div>
 
-  <!-- Controls overlay (shared by title + pause) -->
+  <!-- Classic death screen -->
+  <div id="death" class="screen hidden death-screen">
+    <div class="death-inner">
+      <h2>You died!</h2>
+      <p id="death-score">Score: 0</p>
+      <div class="death-buttons">
+        <button id="btn-respawn" class="btn btn-primary">Respawn</button>
+        <button id="btn-death-title" class="btn">Title screen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls are reached through Options from both title and pause. -->
   <div id="controls" class="screen hidden menu-screen translucent">
     <div class="controls-menu">
       <h2>Controls</h2>
@@ -278,6 +288,9 @@
 
   <div id="underwater-overlay"></div>
   <div id="damage-overlay"></div>
+  <div id="sleep-overlay" class="hidden" aria-hidden="true">
+    <div id="sleep-message" class="sleep-message"></div>
+  </div>
   <div id="vignette"></div>
   <div id="map-overlay" class="hidden">
     <canvas id="map-canvas" width="96" height="96"></canvas>

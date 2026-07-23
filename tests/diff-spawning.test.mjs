@@ -245,7 +245,8 @@ test('the runtime eligible-chunk pass fills but never exceeds its scaled hostile
   world.getBlock = (_x, y) => Math.floor(y) <= 1 ? B.GRASS : B.AIR
   const manager = new EntityManager(world)
   const original = Math.random
-  Math.random = () => 0
+  // 2/128 selects the only valid feet Y in this artificial flat world.
+  Math.random = () => 2 / 128
   try {
     manager.tryNaturalSpawn({
       player: { x: 0.5, y: 1, z: 0.5 },
@@ -282,6 +283,14 @@ test('low render distance still queues the complete radius-8 mob simulation area
   assert.equal(world.meshQueue.length, 9 * 9)
   assert.ok(world.genQueue.some(chunk => chunk.cx === 8 && chunk.cz === 8))
   assert.ok(world.genQueue.every(chunk => Math.abs(chunk.cx) <= 8 && Math.abs(chunk.cz) <= 8))
+})
+
+test('hostile spawn height is one uniform vanilla Y without a forced surface fallback', () => {
+  const world = voxelWorld(BIOME.PLAINS)
+  const manager = new EntityManager(world)
+  assert.equal(withRandom(0.5, () => manager.findNaturalHostileY(0.5, 0.5)), null,
+    'an air sample stays rejected instead of being replaced by surface Y')
+  assert.equal(withRandom(1 / 128, () => manager.findNaturalHostileY(0.5, 0.5)), 1)
 })
 
 test('terrain generation seeds persistent land-animal packs without duplicating a chunk', () => {

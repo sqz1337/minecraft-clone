@@ -62,7 +62,7 @@ export function installGameLifecycle(GameClass: GameConstructor): void {
     this.settings.save()
     this.mode = worldSummary.gameMode
     this.audio.init()
-    this.audio.setVolume(this.settings.volume)
+    this.audio.setVolumes(this.settings.soundVolume, this.settings.musicVolume)
 
     this.seedStr = worldSummary.seed
     this.settings.lastSeed = this.seedStr
@@ -133,8 +133,10 @@ export function installGameLifecycle(GameClass: GameConstructor): void {
         if (hit) this.player.knockback(sourceX, sourceZ, knockback)
         return hit
       },
-      shootProjectile: (x, y, z, tx, ty, tz, damage, shooterId) =>
-        this.projectiles.shootAt(x, y, z, tx, ty, tz, damage, shooterId),
+      shootProjectile: (x, y, z, tx, ty, tz, damage, shooterId) => {
+        this.audio.mobBowShoot({ x, y, z })
+        this.projectiles.shootAt(x, y, z, tx, ty, tz, damage, shooterId)
+      },
       explosion: (x, y, z) => {
         this.particles.burst(x, y, z, [0.45, 0.42, 0.38], 40) // dark debris
         this.particles.burst(x, y, z, [0.82, 0.80, 0.76], 26) // light smoke puff
@@ -235,7 +237,7 @@ export function installGameLifecycle(GameClass: GameConstructor): void {
     this.experienceOrbs.onPickup = () => this.audio.experience()
     this.player.onStatsChanged = () => this.ui.updateSurvivalStats(this.player.health, this.player.hunger, this.player.air, this.equipment.armorPoints)
     this.player.onDamage = () => this.ui.showDamage()
-    this.player.onDeath = () => this.respawnPlayer()
+    this.player.onDeath = () => this.handlePlayerDeath()
     this.player.onExperienceChanged = () => this.ui.updateExperience(this.player.experienceLevel, this.player.experienceFraction)
     this.ui.configureGame(this.atlas, this.sprites, this.mode, this.inventory, this.equipment)
     this.ui.buildHotbar(this.atlas, this.interaction.currentHotbar)
@@ -390,25 +392,31 @@ export function installGameLifecycle(GameClass: GameConstructor): void {
   prototype.saveWorld = function(this: Game, showFailure = false): boolean {
     if (
       !this.saveStore ||
-      (this.state !== 'ready' && this.state !== 'playing' && this.state !== 'paused' && this.state !== 'inventory')
+      (this.state !== 'ready' && this.state !== 'playing' && this.state !== 'paused' &&
+        this.state !== 'inventory' && this.state !== 'dead')
     ) return true
 
+    // If the app closes while the death screen is open, persist the already
+    // dropped inventory but reopen at a valid respawn instead of health zero.
+    const closedWhileDeadSpawn = this.state === 'dead'
+      ? (this.personalSpawn ? this.safeSpawnByBed(this.personalSpawn) : null) ?? this.worldSpawn
+      : null
     const ok = this.saveStore.save({
       player: {
-        x: this.player.pos.x,
-        y: this.player.pos.y,
-        z: this.player.pos.z,
-        yaw: this.player.yaw,
-        pitch: this.player.pitch,
+        x: closedWhileDeadSpawn?.x ?? this.player.pos.x,
+        y: closedWhileDeadSpawn?.y ?? this.player.pos.y,
+        z: closedWhileDeadSpawn?.z ?? this.player.pos.z,
+        yaw: closedWhileDeadSpawn ? 0 : this.player.yaw,
+        pitch: closedWhileDeadSpawn ? -0.08 : this.player.pitch,
         flying: this.player.flying,
         noclip: this.player.noclip,
         hotbarPage: this.interaction.page,
         selectedSlot: this.interaction.selected,
-        health: this.player.health,
-        hunger: this.player.hunger,
-        saturation: this.player.saturation,
-        air: this.player.air,
-        exhaustion: this.player.exhaustion,
+        health: closedWhileDeadSpawn ? 20 : this.player.health,
+        hunger: closedWhileDeadSpawn ? 20 : this.player.hunger,
+        saturation: closedWhileDeadSpawn ? 5 : this.player.saturation,
+        air: closedWhileDeadSpawn ? 15 : this.player.air,
+        exhaustion: closedWhileDeadSpawn ? 0 : this.player.exhaustion,
         experience: this.player.experienceTotal,
         ...(this.personalSpawn ? {
           respawnX: this.personalSpawn.x, respawnY: this.personalSpawn.y, respawnZ: this.personalSpawn.z

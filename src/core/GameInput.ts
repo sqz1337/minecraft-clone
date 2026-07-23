@@ -46,6 +46,17 @@ import type { Game } from './Game'
 
 type GameConstructor = { prototype: Game }
 
+const SLEEP_MESSAGES = [
+  'You dream of a quiet forest.',
+  'Somewhere, a wolf howls at the moon.',
+  'The night passes peacefully.',
+  'You dream of diamonds beneath the stone.',
+  'Rain taps softly against the window.',
+  'You remember the warmth of home.',
+  'The stars drift slowly overhead.',
+  'A distant cave echoes in your dreams.'
+] as const
+
 export function installGameInput(GameClass: GameConstructor): void {
   const prototype = GameClass.prototype
   prototype.bindMouse = function(this: Game): void {
@@ -123,9 +134,6 @@ export function installGameInput(GameClass: GameConstructor): void {
       } else if (bound('weather')) {
         const kind = this.weather.cycle()
         this.ui.toast('Weather: ' + kind)
-      } else if (bound('flashlight')) {
-        const on = this.player.toggleFlashlight()
-        this.ui.toast('Flashlight ' + (on ? 'ON' : 'OFF'))
       } else if (bound('flight')) {
         if (this.mode !== 'creative') {
           this.ui.toast('Flight is only available in Creative; use inspection mode instead')
@@ -151,7 +159,7 @@ export function installGameInput(GameClass: GameConstructor): void {
   }
   prototype.applySettings = function(this: Game): void {
     if (!this.world) return
-    this.audio.setVolume(this.settings.volume)
+    this.audio.setVolumes(this.settings.soundVolume, this.settings.musicVolume)
     this.player.headBobEnabled = this.settings.headBob
     this.player.applyViewSettings()
     const preset = this.settings.preset
@@ -373,9 +381,35 @@ export function installGameInput(GameClass: GameConstructor): void {
       return
     }
     this.personalSpawn = head
-    this.env.timeOfDay = 0.25
-    this.ui.toast('Slept until morning; respawn point set')
     this.saveWorld()
+    this.entities.dismountRider()
+    this.player.syncRidingPose(null)
+    const bedYaw = Math.atan2(dx, dz)
+    const bedPosition = new THREE.Vector3(
+      head.x + 0.5 + dx * 0.4,
+      head.y + 0.94,
+      head.z + 0.5 + dz * 0.4
+    )
+    const bedQuaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.04, bedYaw, 0, 'YXZ'))
+    this.sleepTransition = {
+      elapsed: 0,
+      head,
+      facing,
+      bedPosition,
+      bedQuaternion,
+      message: SLEEP_MESSAGES[Math.floor(Math.random() * SLEEP_MESSAGES.length)],
+      awake: false
+    }
+    // Vanilla snaps directly into the sleeping view; only darkness animates.
+    this.camera.position.copy(bedPosition)
+    this.camera.quaternion.copy(bedQuaternion)
+    this.state = 'sleeping'
+    this.player.enabled = false
+    this.player.clearKeys()
+    this.interaction.primaryUp()
+    this.interaction.secondaryUp()
+    this.interaction.setFirstPersonVisible(false)
+    this.ui.setSleepProgress(0)
   }
   prototype.safeSpawnByBed = function(this: Game, bed: { x: number; y: number; z: number }): { x: number; y: number; z: number } | null {
     if (this.world.getBlock(bed.x, bed.y, bed.z) !== B.BED_HEAD) return null

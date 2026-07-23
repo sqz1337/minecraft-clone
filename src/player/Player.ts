@@ -134,10 +134,6 @@ export class Player {
 
   settings: Settings
 
-  flashlight: THREE.SpotLight
-
-  flashOn = false
-
   constructor(
       camera: THREE.PerspectiveCamera,
       world: World,
@@ -151,12 +147,6 @@ export class Player {
       this.settings = settings ?? new Settings()
       this.baseFov = camera.fov
       camera.rotation.order = 'YXZ'
-
-      this.flashlight = new THREE.SpotLight(0xfff1cf, 0, 44, 0.5, 0.45, 1.3)
-      this.flashlight.position.set(0, 0, 0)
-      camera.add(this.flashlight)
-      camera.add(this.flashlight.target)
-      this.flashlight.target.position.set(0, 0, -1)
     }
 
   get experienceLevel(): number { return experienceProgress(this.experienceTotal).level }
@@ -179,7 +169,6 @@ export interface Player {
   applyViewSettings(): void
   clearKeys(): void
   teleport(x: number, y: number, z: number, yaw?: number, pitch?: number): void
-  toggleFlashlight(): boolean
   toggleFly(): boolean
   cycleCamera(): CameraMode
   getLookDirection(target?: THREE.Vector3): THREE.Vector3

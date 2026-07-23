@@ -20,7 +20,7 @@ const mod = { exports: {} }
 new Function('require', 'module', 'exports', bundle.outputFiles[0].text)(
   await import('node:module').then(({ createRequire }) => createRequire(import.meta.url)), mod, mod.exports
 )
-const { findPath, EntityManager, I, BIOME, B } = mod.exports
+const { canTravelDirectly, findPath, EntityManager, I, BIOME, B } = mod.exports
 
 const profile = (overrides = {}) => ({
   width: 0.6, height: 1.8, maxStep: 1, maxFall: 3,
@@ -54,6 +54,19 @@ test('A* walks around a wall instead of steering into it', () => {
   assert.ok(path)
   assert.ok(path.some(part => Math.abs(part.z) >= 2))
   assert.deepEqual(path.at(-1), node(6, 1, 0))
+})
+
+test('vanilla-style path shortcut smooths open ground without cutting corners or pits', () => {
+  const open = grid()
+  assert.equal(canTravelDirectly(open, 0.5, 1, 0.5, node(5, 1, 4), profile()), true)
+
+  const corner = grid()
+  for (let y = 1; y <= 2; y++) corner.set(1, y, 0, B.STONE)
+  assert.equal(canTravelDirectly(corner, 0.5, 1, 0.5, node(2, 1, 2), profile()), false)
+
+  const pit = grid()
+  pit.set(2, 0, 1, B.AIR)
+  assert.equal(canTravelDirectly(pit, 0.5, 1, 0.5, node(4, 1, 2), profile()), false)
 })
 
 test('footprint and headroom match each species dimensions', () => {

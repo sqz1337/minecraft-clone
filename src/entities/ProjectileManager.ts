@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { EntityManager } from './EntityManager'
+import { createArrowGeometry } from '../gfx/ArrowGeometry'
 
 export type ProjectileOwner = 'player' | 'mob'
 
@@ -41,8 +42,9 @@ export interface ProjectileHooks {
 export class ProjectileManager {
   private projectiles: ProjectileState[] = []
   private nextId = 1
-  private geometry: THREE.BoxGeometry | null = null
+  private geometry: THREE.BufferGeometry | null = null
   private material: THREE.MeshLambertMaterial | null = null
+  private texture: THREE.Texture | null = null
   private group: THREE.Group | null = null
   private hooks: ProjectileHooks
 
@@ -57,8 +59,18 @@ export class ProjectileManager {
       this.group = new THREE.Group()
       this.group.name = 'projectiles'
       scene.add(this.group)
-      this.geometry = new THREE.BoxGeometry(0.06, 0.06, 0.72)
-      this.material = new THREE.MeshLambertMaterial({ color: 0xd8c59b })
+      this.geometry = createArrowGeometry()
+      this.texture = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}assets/minecraft/item/arrows.png`)
+      this.texture.colorSpace = THREE.SRGBColorSpace
+      this.texture.magFilter = THREE.NearestFilter
+      this.texture.minFilter = THREE.NearestFilter
+      this.texture.generateMipmaps = false
+      this.material = new THREE.MeshLambertMaterial({
+        map: this.texture,
+        transparent: true,
+        alphaTest: 0.1,
+        side: THREE.DoubleSide
+      })
     }
   }
 
@@ -183,6 +195,7 @@ export class ProjectileManager {
     for (const projectile of [...this.projectiles]) this.remove(projectile)
     this.geometry?.dispose()
     this.material?.dispose()
+    this.texture?.dispose()
     this.group?.removeFromParent()
   }
 }

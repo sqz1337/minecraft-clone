@@ -24,6 +24,7 @@ export interface EntityView {
   /** Ordered head-to-tail pieces used by the silverfish body wave. */
   segments: THREE.Object3D[]
   carriedBlock: THREE.Mesh | null
+  heldItem: THREE.Object3D | null
   materials: THREE.MeshLambertMaterial[]
 }
 export interface BoxUv {

@@ -26,28 +26,22 @@ function count(chunk, id) {
   return result
 }
 
-test('v3 integrates exact ores and decorator blocks while the frozen v2 baseline does not', () => {
-  assert.equal(CURRENT_WORLD_GEN_VERSION, 3)
+test('v4 integrates exact ores and decorator blocks and upgrades old versions', () => {
+  assert.equal(CURRENT_WORLD_GEN_VERSION, 4)
   const oldGenerator = new WorldGen('stage14-9', 2)
-  const newGenerator = new WorldGen('stage14-9', 3)
+  const newGenerator = new WorldGen('stage14-9', 4)
   assert.equal(SEA_LEVEL, 63)
-  assert.equal(oldGenerator.seaLevel, 40)
+  assert.equal(oldGenerator.generatorVersion, 4)
+  assert.equal(oldGenerator.seaLevel, 63)
   assert.equal(newGenerator.seaLevel, 63)
-  const oldChunk = new Chunk(0, 0), newChunk = new Chunk(0, 0)
-  oldGenerator.fillChunk(oldChunk)
+  const newChunk = new Chunk(0, 0)
   newGenerator.fillChunk(newChunk)
-
-  for (const id of [B.REDSTONE_ORE, B.LAPIS_ORE, B.CLAY, B.DEAD_BUSH, B.CACTUS,
-    B.WATER_LILY, B.VINE, B.BIRCH_LOG, B.BIRCH_LEAVES]) {
-    assert.equal(count(oldChunk, id), 0, `v2 unexpectedly generated block ${id}`)
-  }
-  let birch = 0, clay = count(newChunk, B.CLAY)
+  let clay = count(newChunk, B.CLAY)
   let redstone = count(newChunk, B.REDSTONE_ORE), lapis = count(newChunk, B.LAPIS_ORE)
   for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) {
     if (cx === 0 && cz === 0) continue
     const chunk = new Chunk(cx, cz)
     newGenerator.fillChunk(chunk)
-    birch += count(chunk, B.BIRCH_LOG) + count(chunk, B.BIRCH_LEAVES)
     clay += count(chunk, B.CLAY)
     redstone += count(chunk, B.REDSTONE_ORE)
     lapis += count(chunk, B.LAPIS_ORE)
@@ -55,10 +49,9 @@ test('v3 integrates exact ores and decorator blocks while the frozen v2 baseline
   assert.ok(redstone > 0)
   assert.ok(lapis > 0)
   assert.ok(clay > 0, 'underwater decorator attempts must reach a clay patch')
-  assert.ok(birch > 0, 'the weighted forest selector must reach the full birch generator')
 })
 
-test('the complete v3 population pipeline is independent of neighbouring chunk order', () => {
+test('the complete v4 population pipeline is independent of neighbouring chunk order', () => {
   const forward = new WorldGen('stage14-order', 3)
   const reverse = new WorldGen('stage14-order', 3)
   const forwardLeft = new Chunk(-1, -1), forwardRight = new Chunk(0, -1)

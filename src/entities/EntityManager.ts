@@ -282,7 +282,7 @@ export interface EntityManager {
   tryNaturalSpawn(context: EntityUpdateContext): void
   spawnNaturalCategory(category: 'hostile' | 'passive', chunks: readonly EligibleChunk[], cap: number, context: EntityUpdateContext): void
   findNaturalSquidY(x: number, z: number, seabedY: number): number | null
-  findNaturalHostileY(x: number, z: number, surfaceY: number): number | null
+  findNaturalHostileY(x: number, z: number): number | null
   serialize(): SavedEntity[]
   restore(saved: readonly SavedEntity[]): void
   dispose(): void

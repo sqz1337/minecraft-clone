@@ -6,6 +6,7 @@ const renderer = readFileSync(new URL('../src/entities/EntityRenderer.ts', impor
 const manager = readFileSync(new URL('../src/entities/EntityManager.ts', import.meta.url), 'utf8')
 const types = readFileSync(new URL('../src/entities/EntityTypes.ts', import.meta.url), 'utf8')
 const game = readFileSync(new URL('../src/core/Game.ts', import.meta.url), 'utf8')
+const lifecycle = readFileSync(new URL('../src/core/GameLifecycle.ts', import.meta.url), 'utf8')
 const audio = readFileSync(new URL('../src/audio/Audio.ts', import.meta.url), 'utf8')
 const ui = readFileSync(new URL('../src/ui/UI.ts', import.meta.url), 'utf8')
 const items = readFileSync(new URL('../src/world/Items.ts', import.meta.url), 'utf8')
@@ -45,6 +46,9 @@ test('entity feedback restores portal, love, death, shear and construction event
   assert.ok(game.includes('this.audio.endermanTeleport'))
   assert.ok(audio.includes("'mob/enderman/portal.ogg'"))
   assert.ok(audio.includes("'random/door_open.ogg'"))
+  assert.ok(audio.includes('mobBowShoot(position: SoundPosition)'))
+  assert.ok(audio.includes('1 / (Math.random() * 0.4 + 0.8)'))
+  assert.ok(lifecycle.includes('this.audio.mobBowShoot({ x, y, z })'))
   assert.ok(game.includes('this.audio.door(!open)'))
 })
 

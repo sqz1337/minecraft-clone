@@ -31,8 +31,8 @@ export type {
 } from './structures/Types'
 export const SEA_LEVEL = DENSITY_SEA_LEVEL
 export const LEGACY_SEA_LEVEL = 40
-export const CURRENT_WORLD_GEN_VERSION = 3
-export type WorldGenVersion = 1 | 2 | 3
+export const CURRENT_WORLD_GEN_VERSION = 4
+export type WorldGenVersion = 1 | 2 | 3 | 4
 export { BIOME, BIOME_NAMES, GRASS_TINT } from './Biomes'
 export const JAVA_RANDOM_MULTIPLIER = 0x5deece66dn
 export const JAVA_RANDOM_ADDEND = 0xbn

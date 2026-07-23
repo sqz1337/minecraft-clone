@@ -119,7 +119,8 @@ export const B = {
   WOOL_BROWN: 112,
   WOOL_GREEN: 113,
   WOOL_RED: 114,
-  WOOL_BLACK: 115
+  WOOL_BLACK: 115,
+  ICE: 116
 } as const
 export type BlockId = number
 export type HorizontalFace = 0 | 1 | 4 | 5
@@ -160,7 +161,7 @@ export const TILE = {
   WOOL_YELLOW: 108, WOOL_LIME: 109, WOOL_PINK: 110,
   WOOL_GRAY: 111, WOOL_LIGHT_GRAY: 112, WOOL_CYAN: 113,
   WOOL_PURPLE: 114, WOOL_BLUE: 115, WOOL_BROWN: 116,
-  WOOL_GREEN: 117, WOOL_RED: 118, WOOL_BLACK: 119,
+  WOOL_GREEN: 117, WOOL_RED: 118, WOOL_BLACK: 119, ICE: 120,
   // These species use the existing classic top/leaves cells.
   BIRCH_LOG_TOP: 7, BIRCH_LEAVES: 8
 } as const
@@ -578,6 +579,9 @@ export const DEFINITIONS: BlockDefinition[] = [
   }, { hardness: 2, tool: 'axe', sound: 'wood' }),
   block(B.BIRCH_LEAVES, 'birch_leaves', 'Birch Leaves', TILE.BIRCH_LEAVES, {
     opaque: false, hardness: 0.2, sound: 'leaf', dropItem: null
+  }),
+  block(B.ICE, 'ice', 'Ice', TILE.ICE, {
+    opaque: false, hardness: 0.5, sound: 'stone', dropItem: null, hasItem: false
   })
 ]
 export const BLOCK_COUNT = Math.max(...Object.values(B)) + 1

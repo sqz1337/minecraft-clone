@@ -103,6 +103,51 @@ export function nodeCenter(node: NavNode, profile: NavProfile): { x: number; y: 
   return { x: node.x + span * 0.5, y: node.y, z: node.z + span * 0.5 }
 }
 
+/**
+ * Tests the straight-line shortcut used by vanilla PathNavigate. Three parallel
+ * probes cover the mob's width, preventing it from cutting through diagonal
+ * corners while still removing the visible block-centre zigzag on open ground.
+ */
+export function canTravelDirectly(
+  world: NavigationWorld,
+  startX: number,
+  startY: number,
+  startZ: number,
+  target: NavNode,
+  profile: NavProfile
+): boolean {
+  if (target.terrain !== 'ground') return false
+  const start = nodeForPosition(startX, startY, startZ, profile)
+  if (start.y !== target.y) return false
+
+  const end = nodeCenter(target, profile)
+  const dx = end.x - startX
+  const dz = end.z - startZ
+  const distance = Math.hypot(dx, dz)
+  if (distance < 1e-5) return true
+
+  const perpendicularX = -dz / distance
+  const perpendicularZ = dx / distance
+  const halfWidth = Math.max(0.1, profile.width * 0.45)
+  const samples = Math.max(1, Math.ceil(distance * 5))
+  for (let step = 1; step <= samples; step++) {
+    const progress = step / samples
+    const centerX = startX + dx * progress
+    const centerZ = startZ + dz * progress
+    for (const offset of [-halfWidth, 0, halfWidth]) {
+      const node = nodeForPosition(
+        centerX + perpendicularX * offset,
+        startY,
+        centerZ + perpendicularZ * offset,
+        profile
+      )
+      const valid = canOccupyNode(world, node, profile)
+      if (!valid || valid.terrain !== 'ground' || valid.y !== target.y) return false
+    }
+  }
+  return true
+}
+
 function inspectNode(world: NavigationWorld, node: Pick<NavNode, 'x' | 'y' | 'z'>, profile: NavProfile): NodeInspection {
   const { span, height } = footprint(profile)
   let water = false

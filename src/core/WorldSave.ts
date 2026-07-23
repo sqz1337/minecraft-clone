@@ -59,8 +59,8 @@ export interface WorldSaveData {
   blockFacings: SerializedBlockFacings
   scheduledTicks: SerializedScheduledTicks
   entities: SavedEntity[]
-  /** Procedural baseline version; absent historical saves use the legacy generator. */
-  worldGenVersion?: 1 | 2 | 3
+  /** Stored for compatibility; WorldGen upgrades every value to the current baseline. */
+  worldGenVersion?: 1 | 2 | 3 | 4
   /** One-shot procedural gameplay state; optional so version-1 saves remain compatible. */
   structureChests?: string[]
   villageChunks?: string[]
@@ -465,7 +465,9 @@ function parseSave(value: unknown, seed: string): WorldSaveData | null {
     blockFacings: blockFacings as SerializedBlockFacings,
     scheduledTicks,
     entities: parseEntities(value.entities),
-    worldGenVersion: value.worldGenVersion === 3 ? 3 : value.worldGenVersion === 2 ? 2 : 1,
+    worldGenVersion: value.worldGenVersion === 4 ? 4
+      : value.worldGenVersion === 3 ? 3
+        : value.worldGenVersion === 2 ? 2 : 1,
     structureChests: parseKeyList(value.structureChests, /^-?\d+,-?\d+,-?\d+$/, 16384),
     villageChunks: parseKeyList(value.villageChunks, /^-?\d+,-?\d+$/, 16384),
     villageDoorChunks: parseKeyList(value.villageDoorChunks, /^-?\d+,-?\d+$/, 16384),

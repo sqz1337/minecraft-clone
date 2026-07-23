@@ -13,7 +13,6 @@ export const CONTROL_DEFINITIONS = [
   { id: 'drop', label: 'Drop Item', category: 'Gameplay', defaultKey: 'KeyQ' },
   { id: 'perspective', label: 'Change Perspective', category: 'Gameplay', defaultKey: 'F5' },
   { id: 'console', label: 'Open Command', category: 'Gameplay', defaultKey: 'Slash' },
-  { id: 'flashlight', label: 'Toggle Flashlight', category: 'Gameplay', defaultKey: 'KeyF' },
   { id: 'flight', label: 'Toggle Flight', category: 'Creative', defaultKey: 'KeyG' },
   { id: 'hotbarPage', label: 'Next Hotbar Page', category: 'Creative', defaultKey: 'KeyR' },
   { id: 'inspection', label: 'Inspection Mode', category: 'Creative', defaultKey: 'KeyX' },
@@ -64,7 +63,8 @@ const STORAGE_KEY = 'realmcraft.settings.v1'
 
 export class Settings {
   quality: QualityName = 'high'
-  volume = 0.8
+  soundVolume = 0.8
+  musicVolume = 0.8
   headBob = true
   fullscreen = false
   fov = 75
@@ -84,7 +84,11 @@ export class Settings {
       if (!raw) return
       const data = JSON.parse(raw)
       if (data.quality in QUALITIES) this.quality = data.quality
-      if (typeof data.volume === 'number') this.volume = data.volume
+      const legacyVolume = typeof data.volume === 'number' ? Math.max(0, Math.min(1, data.volume)) : null
+      if (typeof data.soundVolume === 'number') this.soundVolume = Math.max(0, Math.min(1, data.soundVolume))
+      else if (legacyVolume !== null) this.soundVolume = legacyVolume
+      if (typeof data.musicVolume === 'number') this.musicVolume = Math.max(0, Math.min(1, data.musicVolume))
+      else if (legacyVolume !== null) this.musicVolume = legacyVolume
       if (typeof data.headBob === 'boolean') this.headBob = data.headBob
       if (typeof data.fullscreen === 'boolean') this.fullscreen = data.fullscreen
       if (typeof data.fov === 'number') this.fov = Math.max(55, Math.min(100, Math.round(data.fov)))
@@ -109,7 +113,8 @@ export class Settings {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         quality: this.quality,
-        volume: this.volume,
+        soundVolume: this.soundVolume,
+        musicVolume: this.musicVolume,
         headBob: this.headBob,
         fullscreen: this.fullscreen,
         fov: this.fov,

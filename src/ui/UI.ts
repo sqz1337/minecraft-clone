@@ -37,6 +37,12 @@ export class UI {
 
   onQuitApplication: () => void = () => {}
 
+  onButtonClick: () => void = () => {}
+
+  onRespawn: () => void = () => {}
+
+  onDeathQuit: () => void = () => {}
+
   onSettingsChanged: () => void = () => {}
 
   onFullscreenChanged: (fullscreen: boolean) => void = () => {}
@@ -96,6 +102,10 @@ export class UI {
   loadCanvas = el<HTMLCanvasElement>('load-world-canvas')
 
   pause = el<HTMLDivElement>('pause')
+
+  death = el<HTMLDivElement>('death')
+
+  deathScore = el<HTMLParagraphElement>('death-score')
 
   controls = el<HTMLDivElement>('controls')
 
@@ -215,6 +225,10 @@ export class UI {
 
   damageOverlay = el<HTMLDivElement>('damage-overlay')
 
+  sleepOverlay = el<HTMLDivElement>('sleep-overlay')
+
+  sleepMessage = el<HTMLDivElement>('sleep-message')
+
   slots: HTMLDivElement[] = []
 
   hotbarBlocks: readonly number[] = HOTBAR
@@ -264,6 +278,10 @@ export class UI {
         this.inventoryCursor.style.left = `${event.clientX}px`
         this.inventoryCursor.style.top = `${event.clientY}px`
       })
+      document.addEventListener('click', event => {
+        const button = (event.target as Element | null)?.closest('button')
+        if (button && !button.disabled) this.onButtonClick()
+      }, true)
       this.inventoryScreen.addEventListener('contextmenu', (event) => event.preventDefault())
       this.inventoryScreen.addEventListener('mousedown', (event) => {
         if (event.target === this.inventoryScreen && (event.button === 0 || event.button === 2)) {
@@ -317,12 +335,6 @@ export class UI {
         if (event.key === 'Enter') void this.createWorld()
       })
 
-      el<HTMLButtonElement>('btn-title-controls').addEventListener('click', () => {
-        this.menuReturn = 'title'; this.controlsReturn = 'root'; this.showControls()
-      })
-      el<HTMLButtonElement>('btn-pause-controls').addEventListener('click', () => {
-        this.menuReturn = 'pause'; this.controlsReturn = 'root'; this.showControls()
-      })
       el<HTMLButtonElement>('btn-options-controls').addEventListener('click', () => {
         this.controlsReturn = 'options'; this.showControls()
       })
@@ -332,6 +344,8 @@ export class UI {
       })
       el<HTMLButtonElement>('btn-resume').addEventListener('click', () => this.onResume())
       el<HTMLButtonElement>('btn-quit').addEventListener('click', () => this.onQuit())
+      el<HTMLButtonElement>('btn-respawn').addEventListener('click', () => this.onRespawn())
+      el<HTMLButtonElement>('btn-death-title').addEventListener('click', () => this.onDeathQuit())
       el<HTMLButtonElement>('btn-save-world').addEventListener('click', () => this.onSave())
       el<HTMLButtonElement>('btn-pause-options').addEventListener('click', () => this.showOptions('pause'))
       el<HTMLButtonElement>('btn-options-done').addEventListener('click', () => this.closeOptions())
@@ -340,9 +354,14 @@ export class UI {
       el<HTMLButtonElement>('btn-video-done').addEventListener('click', () => this.swap(this.options))
       el<HTMLButtonElement>('btn-sound-done').addEventListener('click', () => this.swap(this.options))
 
-      const vol = el<HTMLInputElement>('opt-volume')
-      vol.addEventListener('input', () => {
-        settings.volume = parseFloat(vol.value); settings.save(); this.onSettingsChanged()
+      const soundVolume = el<HTMLInputElement>('opt-sound-volume')
+      soundVolume.addEventListener('input', () => {
+        settings.soundVolume = parseFloat(soundVolume.value); settings.save(); this.onSettingsChanged()
+        this.syncSettingsUI()
+      })
+      const musicVolume = el<HTMLInputElement>('opt-music-volume')
+      musicVolume.addEventListener('input', () => {
+        settings.musicVolume = parseFloat(musicVolume.value); settings.save(); this.onSettingsChanged()
         this.syncSettingsUI()
       })
       const rd = el<HTMLInputElement>('opt-render')
@@ -437,6 +456,9 @@ export interface UI {
   showLoading(): void
   showGame(): void
   showPause(): void
+  showDeath(score: number): void
+  setSleepProgress(progress: number, message?: string): void
+  hideSleep(): void
   hidePause(): void
   isPauseVisible(): boolean
   showInventory(on: boolean): void

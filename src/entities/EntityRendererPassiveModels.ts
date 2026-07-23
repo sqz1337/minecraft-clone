@@ -127,6 +127,7 @@ export function installEntityRendererPassiveModels(EntityRendererClass: EntityRe
       tentacles: [],
       segments: [],
       carriedBlock: null,
+      heldItem: null,
       materials: []
     }
   }

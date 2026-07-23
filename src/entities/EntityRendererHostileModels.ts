@@ -13,40 +13,43 @@ export function installEntityRendererHostileModels(EntityRendererClass: EntityRe
   prototype.humanoid = function(this: EntityRenderer, kind: 'zombie' | 'skeleton' | 'enderman'): EntityView {
     const group = new THREE.Group()
     const material = this.materials.get(kind)!
+    let heldItem: THREE.Object3D | null = null
     const tall = kind === 'enderman'
     const thin = kind === 'skeleton' || tall
     const bodyHeight = tall ? 0.7 : 0.75
     const legHeight = tall ? 1.72 : 0.75
     const armHeight = tall ? 1.72 : 0.75
-    const body = this.box(group, [thin ? 0.38 : 0.5, bodyHeight, thin ? 0.25 : 0.28], [0, legHeight + bodyHeight * 0.5, 0], material,
+    // ModelSkeleton and ModelEnderman inherit the full 8x12x4 biped torso.
+    // Only their limbs are thin; shrinking the body erased most of the rib cage.
+    const body = this.box(group, [0.5, bodyHeight, thin ? 0.25 : 0.28], [0, legHeight + bodyHeight * 0.5, 0], material,
       { u: tall ? 32 : 16, v: 16, width: 8, height: 12, depth: 4 })
     body.castShadow = true
     const head = this.box(group, [tall ? 0.48 : 0.5, tall ? 0.48 : 0.5, tall ? 0.42 : 0.5], [0, legHeight + bodyHeight + 0.25, 0], material,
       { u: 0, v: 0, width: 8, height: 8, depth: 8 })
     head.castShadow = true
     const legs: THREE.Object3D[] = []
-    for (const x of [-0.13, 0.13]) legs.push(this.limb(group, [thin ? 0.14 : 0.23, legHeight, 0.24], [x, legHeight, 0], material,
+    for (const x of [-0.13, 0.13]) legs.push(this.limb(group, [thin ? 0.125 : 0.23, legHeight, thin ? 0.125 : 0.24], [x, legHeight, 0], material,
       { u: tall ? 56 : 0, v: tall ? 0 : 16, width: tall ? 2 : 4, height: tall ? 30 : 12, depth: tall ? 2 : 4 }))
     const arms: THREE.Object3D[] = []
     for (const x of [-0.32, 0.32]) {
-      arms.push(this.limb(group, [thin ? 0.13 : 0.22, armHeight, 0.22],
+      arms.push(this.limb(group, [thin ? 0.125 : 0.22, armHeight, thin ? 0.125 : 0.22],
         [x, legHeight + bodyHeight, 0], material,
         { u: tall ? 56 : 40, v: tall ? 0 : 16, width: tall ? 2 : 4, height: tall ? 30 : 12, depth: tall ? 2 : 4 }))
     }
     if (kind === 'skeleton') {
-      const bow = new THREE.Group()
-      bow.position.set(0, -armHeight * 0.55, -0.18)
-      bow.rotation.set(0.15, 0, -0.2)
-      arms[1].add(bow)
-      this.box(bow, [0.055, 0.42, 0.055], [0, 0.2, 0], this.bowMaterial,
-        { u: 0, v: 0, width: 1, height: 7, depth: 1 }, 0.35)
-      this.box(bow, [0.055, 0.42, 0.055], [0, -0.2, 0], this.bowMaterial,
-        { u: 0, v: 0, width: 1, height: 7, depth: 1 }, -0.35)
-      this.box(bow, [0.025, 0.78, 0.025], [0.075, 0, 0], this.bowMaterial,
-        { u: 0, v: 0, width: 1, height: 12, depth: 1 })
+      const bowGeometry = createExtrudedItemGeometry(0.63)
+      this.geometries.push(bowGeometry)
+      const bow = new THREE.Mesh(bowGeometry, this.bowMaterial)
+      // RenderBiped attaches held items to bipedRightArm and then applies the
+      // bow-specific hand transform. Our axes invert its downward Y/forward Z.
+      bow.position.set(-0.0625, -0.5625, 0.3125)
+      bow.castShadow = true
+      arms[0].add(bow)
+      heldItem = bow
     }
     body.userData.hostile = true
     const view = this.view(group, legs, head, arms)
+    view.heldItem = heldItem
     if (kind === 'enderman') {
       this.box(head, [0.5, 0.5, 0.44], [0, 0, 0], this.eyeMaterials.get('enderman')!,
         { u: 0, v: 0, width: 8, height: 8, depth: 8 })

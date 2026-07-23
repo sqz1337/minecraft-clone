@@ -62,11 +62,6 @@ export function installPlayerState(PlayerClass: PlayerConstructor): void {
     this.pitch = clamp(pitch, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01)
     this.syncCamera(0)
   }
-  prototype.toggleFlashlight = function(this: Player): boolean {
-    this.flashOn = !this.flashOn
-    this.flashlight.intensity = this.flashOn ? 120 : 0
-    return this.flashOn
-  }
   prototype.toggleFly = function(this: Player): boolean {
     this.flying = !this.flying
     if (this.flying) this.vel.y = 0

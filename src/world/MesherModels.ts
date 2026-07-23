@@ -96,12 +96,13 @@ export function addBedBlock(
   const lf = 0.28 + 0.72 * light / 15
 
   const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 2, facing))
-  // orient the top texture so its v axis runs along the foot→head direction
+  // RenderBlocks rotates the source tile's horizontal axis along the bed.
+  // That keeps the pillow at the outer end instead of turning it sideways.
   const topUv: Record<number, [number, number][]> = {
-    4: [[u0, v0], [u0, v1], [u1, v0], [u1, v1]],
-    5: [[u0, v1], [u0, v0], [u1, v1], [u1, v0]],
-    0: [[u0, v0], [u1, v0], [u0, v1], [u1, v1]],
-    1: [[u0, v1], [u1, v1], [u0, v0], [u1, v0]]
+    4: [[u0, v0], [u1, v0], [u0, v1], [u1, v1]],
+    5: [[u1, v1], [u0, v1], [u1, v0], [u0, v0]],
+    0: [[u0, v1], [u0, v0], [u1, v1], [u1, v0]],
+    1: [[u1, v0], [u1, v1], [u0, v0], [u0, v1]]
   }
   const tuv = topUv[facing] ?? topUv[4]
   const topCorners = [[0, 0], [0, 1], [1, 0], [1, 1]] as const
@@ -119,13 +120,18 @@ export function addBedBlock(
     if (isBedBlock(nb)) continue
     const [su0, sv0, su1, sv1] = atlas.uvRect(tileFor(id, f, facing))
     const vLo = sv0, vHi = sv0 + (sv1 - sv0) * h
+    // RenderBlocks flips exactly one lateral face. Without this mirror the
+    // leg pixels point toward the center seam on one side of the bed.
+    const flipSide = (facing === 4 && f === 0) || (facing === 5 && f === 1) ||
+      (facing === 0 && f === 5) || (facing === 1 && f === 4)
     for (let ci = 0; ci < 4; ci++) {
       const cc = fd.c[ci]
       const uv = fd.uv[ci]
+      const sideU = flipSide ? 1 - uv[0] : uv[0]
       builder.vertex(
         wx + cc[0], y + cc[1] * h, wz + cc[2],
         fd.n[0], fd.n[1], fd.n[2],
-        uv[0] === 0 ? su0 : su1,
+        sideU === 0 ? su0 : su1,
         uv[1] === 0 ? vLo : vHi,
         lf * 0.85, lf * 0.85, lf * 0.85, 0
       )
@@ -133,20 +139,20 @@ export function addBedBlock(
     builder.quad(false)
   }
 
-  if (!OPAQUE[sample(wx, y - 1, wz)]) {
-    const fd = FACES[3]
-    const [bu0, bv0, bu1, bv1] = atlas.uvRect(tileFor(id, 3, facing))
-    for (let ci = 0; ci < 4; ci++) {
-      const cc = fd.c[ci]
-      const uv = fd.uv[ci]
-      builder.vertex(
-        wx + cc[0], y, wz + cc[2], 0, -1, 0,
-        uv[0] === 0 ? bu0 : bu1, uv[1] === 0 ? bv0 : bv1,
-        lf * 0.6, lf * 0.6, lf * 0.6, 0
-      )
-    }
-    builder.quad(false)
+  // Vanilla renders the wooden underside three pixels above the floor. The
+  // transparent side textures then supply the short legs below that board.
+  const fd = FACES[3]
+  const [bu0, bv0, bu1, bv1] = atlas.uvRect(tileFor(id, 3, facing))
+  for (let ci = 0; ci < 4; ci++) {
+    const cc = fd.c[ci]
+    const uv = fd.uv[ci]
+    builder.vertex(
+      wx + cc[0], y + 0.1875, wz + cc[2], 0, -1, 0,
+      uv[0] === 0 ? bu0 : bu1, uv[1] === 0 ? bv0 : bv1,
+      lf * 0.6, lf * 0.6, lf * 0.6, 0
+    )
   }
+  builder.quad(false)
 }
 export type PixelRect = readonly [x: number, y: number, width: number, height: number]
 export class TexturedBoxBuilder {

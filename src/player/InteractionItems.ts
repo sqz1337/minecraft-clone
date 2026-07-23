@@ -201,7 +201,7 @@ export function installInteractionItems(InteractionClass: InteractionConstructor
         this.drops.spawn(food.returnsItem, eye.x, eye.y - 0.4, eye.z, 1)
       }
     }
-    this.audio.eat()
+    this.audio.burp()
     this.swing()
   }
   prototype.finishDrinkingMilk = function(this: Interaction): void {

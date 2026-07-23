@@ -202,6 +202,11 @@ export function installInteractionUpdate(InteractionClass: InteractionConstructo
       } else if (item?.food && this.mode === 'survival') {
         if (this.player.hunger < 20) {
           this.eatProgress += dt
+          this.eatSoundTimer -= dt
+          if (this.eatSoundTimer <= 0) {
+            this.audio.eat()
+            this.eatSoundTimer += 0.2
+          }
           this.handSwing = Math.max(this.handSwing, 0.32 + Math.sin(this.eatProgress * 18) * 0.08)
           if (this.eatProgress >= item.food.useSeconds) {
             this.finishEating(item)

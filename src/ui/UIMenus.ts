@@ -147,14 +147,19 @@ export function installUIMenus(UIClass: UIConstructor): void {
     const qualityNames: Record<QualityName, string> = {
       low: 'Fast', medium: 'Balanced', high: 'Fancy', ultra: 'Fabulous'
     }
-    const percent = Math.round(this.settings.volume * 100)
+    const soundPercent = Math.round(this.settings.soundVolume * 100)
+    const musicPercent = Math.round(this.settings.musicVolume * 100)
     const sensitivity = Math.round(this.settings.mouseSensitivity * 200)
     const fovName = this.settings.fov === 75 ? 'Normal' : String(this.settings.fov)
-    el<HTMLInputElement>('opt-volume').value = String(this.settings.volume)
+    el<HTMLInputElement>('opt-sound-volume').value = String(this.settings.soundVolume)
+    el<HTMLInputElement>('opt-music-volume').value = String(this.settings.musicVolume)
     el<HTMLInputElement>('opt-render').value = String(this.settings.renderDistance)
     el<HTMLInputElement>('opt-fov').value = String(this.settings.fov)
     el<HTMLInputElement>('opt-sensitivity').value = String(this.settings.mouseSensitivity)
-    el<HTMLElement>('opt-volume-label').textContent = `Master Volume: ${percent === 0 ? 'OFF' : percent + '%'}`
+    el<HTMLElement>('opt-sound-volume-label').textContent =
+      `Game Sound: ${soundPercent === 0 ? 'OFF' : soundPercent + '%'}`
+    el<HTMLElement>('opt-music-volume-label').textContent =
+      `Music: ${musicPercent === 0 ? 'OFF' : musicPercent + '%'}`
     el<HTMLElement>('opt-render-label').textContent = `Render Distance: ${this.settings.renderDistance} chunks`
     el<HTMLElement>('opt-fov-label').textContent = `FOV: ${fovName}`
     el<HTMLElement>('opt-sensitivity-label').textContent = `Sensitivity: ${sensitivity}%`
@@ -223,6 +228,26 @@ export function installUIMenus(UIClass: UIConstructor): void {
   }
   prototype.showGame = function(this: UI): void { this.swap(null); this.hud.classList.remove('hidden') }
   prototype.showPause = function(this: UI): void { this.pause.classList.remove('hidden') }
+  prototype.showDeath = function(this: UI, score: number): void {
+    this.deathScore.textContent = `Score: ${Math.max(0, Math.floor(score))}`
+    this.hideSleep()
+    this.hud.classList.add('hidden')
+    this.swap(this.death)
+  }
+  prototype.setSleepProgress = function(this: UI, progress: number, message = ''): void {
+    this.sleepOverlay.classList.remove('hidden')
+    this.sleepOverlay.style.setProperty('--sleep-opacity', String(Math.max(0, Math.min(1, progress))))
+    this.sleepMessage.textContent = message
+    this.sleepMessage.classList.toggle('visible', message.length > 0)
+    this.hud.classList.add('sleeping')
+  }
+  prototype.hideSleep = function(this: UI): void {
+    this.sleepOverlay.classList.add('hidden')
+    this.sleepOverlay.style.removeProperty('--sleep-opacity')
+    this.sleepMessage.textContent = ''
+    this.sleepMessage.classList.remove('visible')
+    this.hud.classList.remove('sleeping')
+  }
   prototype.hidePause = function(this: UI): void { this.pause.classList.add('hidden') }
   prototype.isPauseVisible = function(this: UI): boolean { return !this.pause.classList.contains('hidden') }
   prototype.showInventory = function(this: UI, on: boolean): void {
@@ -243,7 +268,7 @@ export function installUIMenus(UIClass: UIConstructor): void {
   prototype.swap = function(this: UI, screen: HTMLDivElement | null): void {
     for (const item of [
       this.title, this.worldSelect, this.worldCreate, this.options, this.videoSettings, this.soundSettings,
-      this.controls, this.deleteWorldConfirm, this.loading, this.pause
+      this.controls, this.deleteWorldConfirm, this.loading, this.pause, this.death
     ]) item.classList.toggle('hidden', item !== screen)
   }
 }

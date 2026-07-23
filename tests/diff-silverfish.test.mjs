@@ -122,3 +122,36 @@ test('silverfish renderer uses seven animated segments and three classic dorsal 
     TestTextureLoader.prototype.load = originalLoad
   }
 })
+
+test('skeleton renderer keeps the full rib cage and attaches its bow to the aimed right arm', () => {
+  const originalLoad = TestTextureLoader.prototype.load
+  TestTextureLoader.prototype.load = () => new TestTexture()
+  try {
+    const renderer = new EntityRenderer(new TestScene())
+    renderer.sync([{
+      id: 'skeleton-render-test', kind: 'skeleton',
+      x: 0, y: 0, z: 0, previousX: 0, previousY: 0, previousZ: 0,
+      vx: 0, vy: 0, vz: 0, yaw: 0, previousYaw: 0,
+      age: 0, sizeScale: 1, active: true, hurtTime: 0, deathTime: 0,
+      headYaw: 0, headPitch: 0, carriedBlock: null, sheared: false, saddled: false
+    }], 1, 0)
+    const view = renderer.views.get('skeleton-render-test')
+    const body = view.group.children[0]
+    assert.equal(body.geometry.parameters.width, 0.5)
+    assert.equal(body.geometry.parameters.depth, 0.25)
+
+    const meshCount = object => {
+      let count = 0
+      object.traverse(child => { if (child instanceof TestMesh) count++ })
+      return count
+    }
+    assert.equal(meshCount(view.arms[0]), 2, 'right arm includes arm mesh and bow')
+    assert.equal(meshCount(view.arms[1]), 1, 'left drawing arm does not carry a duplicate bow')
+    assert.equal(view.arms[0].rotation.y, -0.1)
+    assert.equal(view.arms[1].rotation.y, 0.5)
+    assert.equal(renderer.materials.get('skeleton').transparent, true)
+    renderer.dispose()
+  } finally {
+    TestTextureLoader.prototype.load = originalLoad
+  }
+})

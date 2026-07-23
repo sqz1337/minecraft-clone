@@ -81,6 +81,8 @@ export class Interaction {
 
   eatProgress = 0
 
+  eatSoundTimer = 0
+
   attackCooldown = 0
 
   attackingEntity = false

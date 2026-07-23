@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 const bundle = buildSync({
   stdin: {
-    contents: "export { createExtrudedItemGeometry, setExtrudedItemUv } from './src/gfx/HeldItemGeometry.ts'; export { vanillaHeldModelName } from './src/gfx/VanillaHeldItems.ts'; export { ITEMS } from './src/world/Items.ts'",
+    contents: "export { createExtrudedItemGeometry, setExtrudedItemUv } from './src/gfx/HeldItemGeometry.ts'; export { createArrowGeometry } from './src/gfx/ArrowGeometry.ts'; export { vanillaHeldModelName } from './src/gfx/VanillaHeldItems.ts'; export { ITEMS } from './src/world/Items.ts'",
     resolveDir: process.cwd(), sourcefile: 'held-item-test-entry.ts', loader: 'ts'
   },
   bundle: true, write: false, platform: 'node', format: 'cjs',
@@ -18,7 +18,7 @@ new Function('require', 'module', 'exports', bundle.outputFiles[0].text)(
   bundledModule, bundledModule.exports
 )
 
-const { createExtrudedItemGeometry, setExtrudedItemUv, vanillaHeldModelName, ITEMS } = bundledModule.exports
+const { createExtrudedItemGeometry, setExtrudedItemUv, createArrowGeometry, vanillaHeldModelName, ITEMS } = bundledModule.exports
 
 test('held sprite geometry has front, back and 16 pixel edge strips', () => {
   const geometry = createExtrudedItemGeometry(0.32)
@@ -42,6 +42,21 @@ test('animated item atlas cells remap every face without rebuilding geometry', (
     assert.equal(uv.getX(i), 0.25 + source.getX(i) * 0.0625)
     assert.equal(uv.getY(i), 0.5 + source.getY(i) * 0.0625)
   }
+})
+
+test('classic arrow uses crossed textured planes instead of a solid placeholder box', () => {
+  const geometry = createArrowGeometry()
+  const positions = geometry.getAttribute('position')
+  const uv = geometry.getAttribute('uv')
+  assert.equal(positions.count, 12)
+  assert.equal(geometry.getIndex().count, 18)
+  assert.ok(Array.from({ length: positions.count }, (_, i) => positions.getX(i)).some(x => x === 0))
+  assert.ok(Array.from({ length: positions.count }, (_, i) => positions.getY(i)).some(y => y === 0))
+  assert.ok(Array.from({ length: uv.count }, (_, i) => uv.getX(i)).every(u => u >= 0 && u <= 0.5))
+  assert.deepEqual(
+    Array.from({ length: 4 }, (_, i) => [uv.getX(i), uv.getY(i)]),
+    [[0, 27 / 32], [0, 1], [0.5, 1], [0.5, 27 / 32]]
+  )
 })
 
 test('project item keys resolve to official vanilla held-item model names', () => {

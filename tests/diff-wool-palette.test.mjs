@@ -37,7 +37,7 @@ test('all sixteen wool colors have stable metadata-free ids and round-trip helpe
   assert.equal(B.WOOL, 65, 'the persisted white-wool id must remain unchanged')
   assert.deepEqual(COLORS.slice(1), Array.from({ length: 15 }, (_, index) => 101 + index))
   assert.deepEqual(WOOL_BLOCKS, COLORS)
-  assert.equal(BLOCKS.length, 116)
+  assert.equal(BLOCKS.length, 117)
 
   COLORS.forEach((id, color) => {
     assert.equal(woolBlockForColor(color), id)
