@@ -62,7 +62,6 @@ export function installPlayerMovement(PlayerClass: PlayerConstructor): void {
       : this.inWater ? SWIM
         : this.crouching ? CROUCH_SPEED
           : this.sprinting ? SPRINT : WALK
-
     const tx = dirLen > 0 ? (dirX / dirLen) * speed : 0
     const tz = dirLen > 0 ? (dirZ / dirLen) * speed : 0
     const accel = freeFlight ? 8 : this.onGround ? 12 : this.inWater ? 4 : 2.2

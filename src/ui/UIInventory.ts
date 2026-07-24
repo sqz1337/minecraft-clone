@@ -169,10 +169,18 @@ export function installUIInventory(UIClass: UIConstructor): void {
     if (this.blockNameTimer !== null) clearTimeout(this.blockNameTimer)
     this.blockNameTimer = window.setTimeout(() => this.blockName.classList.remove('visible'), 1600)
   }
-  prototype.updateSurvivalStats = function(this: UI, health: number, hunger: number, air: number, armor = 0): void {
+  prototype.updateSurvivalStats = function(
+    this: UI,
+    health: number,
+    hunger: number,
+    air: number,
+    armor = 0,
+    saturation = 0
+  ): void {
     if (this.mode !== 'survival') return
     this.healthBar.innerHTML = this.statusIcons('heart', health)
     this.hungerBar.innerHTML = this.statusIcons('food', hunger)
+    this.hungerBar.classList.toggle('depleted', saturation <= 0.001)
     this.armorBar.innerHTML = armor > 0 ? this.statusIcons('armor', armor) : ''
     // 15 seconds of air shown as the classic 10 bubbles (1.5 s per bubble)
     this.airBar.classList.toggle('hidden', air >= 14.95)
@@ -192,7 +200,16 @@ export function installUIInventory(UIClass: UIConstructor): void {
     )
     if (this.screen?.kind === 'enchant') this.renderScreen()
   }
-  prototype.statusIcons = function(this: UI, kind: 'heart' | 'food' | 'armor', value: number): string {
+  prototype.updateAttackIndicator = function(this: UI, charge: number, visible: boolean): void {
+    const clamped = Math.max(0, Math.min(1, charge))
+    this.attackIndicator.classList.toggle('visible', visible)
+    this.attackIndicator.style.setProperty('--attack-charge', clamped.toFixed(3))
+  }
+  prototype.statusIcons = function(
+    this: UI,
+    kind: 'heart' | 'food' | 'armor',
+    value: number
+  ): string {
     let html = ''
     for (let i = 0; i < 10; i++) {
       const remaining = value - i * 2

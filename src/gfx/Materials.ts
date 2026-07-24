@@ -32,6 +32,7 @@ export class Materials {
       // tiles contain real cutout pixels (not black geometry).
       alphaTest: 0.42
     })
+    this.injectBlockLight(this.solid)
 
     this.foliage = new THREE.MeshLambertMaterial({
       map: atlas.colorTex,
@@ -40,6 +41,7 @@ export class Materials {
       side: THREE.DoubleSide
     })
     this.injectWind(this.foliage)
+    this.injectBlockLight(this.foliage)
 
     this.glass = new THREE.MeshLambertMaterial({
       map: atlas.colorTex,
@@ -101,21 +103,37 @@ export class Materials {
     // surface keeps it alive; the texture itself carries the animated look.
     this.water = new THREE.MeshLambertMaterial({
       map: atlas.colorTex,
-      transparent: true,
-      depthWrite: false,
+      transparent: false,
+      opacity: 1,
+      color: 0x668eaa,
+      depthWrite: true,
       side: THREE.DoubleSide
     })
+    this.injectBlockLight(this.glass)
     this.injectWaterWave(this.water)
+  }
+
+  setWaterViewedFromUnderwater(underwater: boolean): void {
+    const opacity = underwater ? 0.92 : 1
+    if (this.water.transparent === underwater && this.water.opacity === opacity) return
+    this.water.transparent = underwater
+    this.water.opacity = opacity
+    this.water.needsUpdate = true
   }
 
   /** Undulates the water surface (aTop vertices) in world space, seamless across chunks. */
   private injectWaterWave(mat: THREE.Material): void {
-    mat.onBeforeCompile = (shader: { uniforms: Record<string, unknown>, vertexShader: string }) => {
+    mat.onBeforeCompile = (shader: {
+      uniforms: Record<string, unknown>
+      vertexShader: string
+      fragmentShader: string
+    }) => {
       shader.uniforms.uWaterTime = U.uTime
       shader.vertexShader =
-        'attribute float aTop;\nuniform float uWaterTime;\n' +
+        'attribute float aTop;\nattribute float aWaterDepth;\nuniform float uWaterTime;\nvarying float vWaterDepth;\n' +
         shader.vertexShader.replace('#include <begin_vertex>', /* glsl */`
           #include <begin_vertex>
+          vWaterDepth = aWaterDepth;
           if (aTop > 0.5) {
             vec3 wp = (modelMatrix * vec4(transformed, 1.0)).xyz;
             transformed.y += sin(wp.x * 0.9 + uWaterTime * 1.3) * 0.045
@@ -123,8 +141,16 @@ export class Materials {
                            + sin((wp.x + wp.z) * 0.5 + uWaterTime * 0.8) * 0.035;
           }
         `)
+      shader.fragmentShader =
+        'varying float vWaterDepth;\n' +
+        shader.fragmentShader.replace('#include <map_fragment>', /* glsl */`
+          #include <map_fragment>
+          float waterTransmission = exp(-max(0.0, vWaterDepth) * 0.11);
+          diffuseColor.rgb *= mix(0.38, 1.0, waterTransmission);
+          diffuseColor.a *= mix(1.0, 0.90, waterTransmission);
+        `)
     }
-    mat.customProgramCacheKey = () => 'water-wave-v2'
+    mat.customProgramCacheKey = () => 'water-wave-depth-v3'
   }
 
   setXray(enabled: boolean): void {
@@ -143,5 +169,31 @@ export class Materials {
         shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WIND_VERTEX)
     }
     mat.customProgramCacheKey = () => 'wind-' + mat.type
+  }
+
+  /**
+   * The sun/moon lights shade skylight, while propagated block light stays
+   * equally bright at noon and midnight. This floor is the classic lightmap's
+   * independent block-light channel.
+   */
+  private injectBlockLight(mat: THREE.Material): void {
+    const previous = mat.onBeforeCompile
+    const previousKey = mat.customProgramCacheKey
+    mat.onBeforeCompile = (shader, renderer) => {
+      previous.call(mat, shader, renderer)
+      shader.vertexShader =
+        'attribute vec3 aBlockLight;\nvarying vec3 vBlockLight;\n' +
+        shader.vertexShader.replace(
+          '#include <color_vertex>',
+          '#include <color_vertex>\nvBlockLight = aBlockLight;'
+        )
+      shader.fragmentShader =
+        'varying vec3 vBlockLight;\n' +
+        shader.fragmentShader.replace(
+          '#include <opaque_fragment>',
+          'outgoingLight = max(outgoingLight, diffuseColor.rgb * vBlockLight);\n#include <opaque_fragment>'
+        )
+    }
+    mat.customProgramCacheKey = () => `${previousKey.call(mat)}-block-light-v1`
   }
 }

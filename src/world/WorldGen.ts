@@ -142,6 +142,7 @@ export interface WorldGen {
   villageFeaturesIn(cx: number, cz: number): VillageInfo[]
   nearestStronghold(x: number, z: number): { x: number; z: number } | null
   findSpawn(): { x: number, z: number, yaw: number }
+  findSpawnAsync(): Promise<{ x: number, z: number, yaw: number }>
 }
 
 installWorldGenTerrain(WorldGen)

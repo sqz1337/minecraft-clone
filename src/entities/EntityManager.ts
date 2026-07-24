@@ -276,6 +276,11 @@ export interface EntityManager {
   resolveEmbedded(entity: EntityState): void
   collidesWorld(entity: EntityState): boolean
   separateEntities(): void
+  resolvePlayerCollision(
+    position: { x: number; y: number; z: number },
+    velocity: { x: number; z: number },
+    canOccupy: (x: number, y: number, z: number) => boolean
+  ): boolean
   breedPairs(): void
   nearestMate(entity: EntityState, radius: number): EntityState | null
   breedVillagerPairs(): void

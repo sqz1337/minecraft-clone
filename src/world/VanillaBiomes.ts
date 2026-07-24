@@ -17,7 +17,10 @@ const DEFAULT = Object.freeze({
 })
 
 const INFO: Readonly<Record<number, VanillaBiomeInfo>> = Object.freeze({
-  [VANILLA_BIOME.OCEAN]: { ...DEFAULT, minHeight: f(-1), maxHeight: f(0.4) },
+  [VANILLA_BIOME.OCEAN]: {
+    ...DEFAULT, minHeight: f(-1), maxHeight: f(0.4),
+    top: B.SAND, filler: B.SAND
+  },
   [VANILLA_BIOME.PLAINS]: { ...DEFAULT, temperature: f(0.8) },
   [VANILLA_BIOME.DESERT]: {
     ...DEFAULT, minHeight: f(0.1), maxHeight: f(0.2), temperature: f(2),
@@ -35,7 +38,8 @@ const INFO: Readonly<Record<number, VanillaBiomeInfo>> = Object.freeze({
   },
   [VANILLA_BIOME.RIVER]: { ...DEFAULT, minHeight: f(-0.5), maxHeight: f(0) },
   [VANILLA_BIOME.FROZEN_OCEAN]: {
-    ...DEFAULT, minHeight: f(-1), maxHeight: f(0.5), temperature: f(0)
+    ...DEFAULT, minHeight: f(-1), maxHeight: f(0.5), temperature: f(0),
+    top: B.SAND, filler: B.SAND
   },
   [VANILLA_BIOME.FROZEN_RIVER]: {
     ...DEFAULT, minHeight: f(-0.5), maxHeight: f(0), temperature: f(0)

@@ -68,6 +68,17 @@ export class World {
 
   blockFacings = new Map<string, Map<number, HorizontalFace>>()
 
+  chestLidModels = new Map<string, {
+    group: THREE.Group
+    pivot: THREE.Group
+    angle: number
+    target: number
+    chunkKey: number
+    blocks: string[]
+  }>()
+
+  openChestBlocks = new Set<string>()
+
   editsDirty = false
 
   xrayEnabled = false
@@ -93,6 +104,11 @@ export class World {
   pendingGeneration = new Map<number, {
       key: number
       resolve: () => void
+    }>()
+
+  pendingSpawnSearches = new Map<number, {
+      resolve: (spawn: { x: number; z: number; yaw: number }) => void
+      reject: (error: Error) => void
     }>()
 
   generationJobs = new Map<number, Promise<void>>()
@@ -125,6 +141,7 @@ export class World {
 
 export interface World {
   startGenerationWorker(): void
+  findSpawnAsync(): Promise<{ x: number; z: number; yaw: number }>
   key(cx: number, cz: number): string
   getChunk(cx: number, cz: number): Chunk | undefined
   chunkAt(cx: number, cz: number): Chunk | undefined
@@ -137,6 +154,7 @@ export interface World {
   serializeBlockEdits(): SerializedBlockEdits
   serializeBlockFacings(): SerializedBlockFacings
   serializeScheduledTicks(): SerializedScheduledTicks
+  migrateLegacyChestFacings(targetX: number, targetZ: number): number
   getBlock(x: number, y: number, z: number): number
   facingsForChunk(cx: number, cz: number): ReadonlyMap<number, HorizontalFace> | undefined
   getBlockFacing(x: number, y: number, z: number): HorizontalFace
@@ -216,6 +234,10 @@ export interface World {
   continueFallingBlock(x: number, y: number, z: number): void
   remeshChunk(chunk: Chunk): void
   disposeChunkMeshes(chunk: Chunk): void
+  syncChunkChestModels(chunk: Chunk): void
+  removeChunkChestModels(chunk: Chunk): void
+  setChestOpen(positions: ReadonlyArray<readonly [number, number, number]>, open: boolean): void
+  updateChestAnimations(dt: number): void
   dispose(): void
 }
 

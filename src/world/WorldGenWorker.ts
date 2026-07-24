@@ -17,6 +17,21 @@ scope.onmessage = (event) => {
     return
   }
 
+  if (request.type === 'find-spawn') {
+    try {
+      if (!generator) throw new Error('World generator worker was not initialized')
+      const spawn = generator.findSpawn()
+      scope.postMessage({ type: 'spawn-found', id: request.id, ...spawn })
+    } catch (error) {
+      scope.postMessage({
+        type: 'spawn-error',
+        id: request.id,
+        message: error instanceof Error ? error.message : String(error)
+      })
+    }
+    return
+  }
+
   try {
     if (!generator) throw new Error('World generator worker was not initialized')
     const chunk = new Chunk(request.cx, request.cz)

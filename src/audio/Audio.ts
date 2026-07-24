@@ -119,7 +119,7 @@ const SOUND_FILES = [
   'liquid/splash.ogg', 'random/pop.ogg', 'random/click.ogg', 'random/break.ogg', 'random/burp.ogg',
   'random/door_open.ogg', 'random/door_close.ogg',
   'mob/enderman/portal.ogg', 'mob/enderman/portal2.ogg', 'mob/irongolem/throw.ogg',
-  'random/bow.ogg', 'random/chestopen.ogg', 'random/fuse.ogg', 'random/orb.ogg',
+  'random/bow.ogg', 'random/chestopen.ogg', 'random/chestclosed.ogg', 'random/fuse.ogg', 'random/orb.ogg',
   ...numberedPaths('random/eat', 3), ...numberedPaths('random/explode', 4),
   'music/calm1.ogg', 'music/calm2.ogg', 'music/calm3.ogg',
   ...SILENT_HILL_TRACKS,
@@ -442,10 +442,11 @@ export class AudioMan {
     this.sample('liquid/splash.ogg', 0.08, 1.45 + Math.random() * 0.15)
   }
 
-  thunder(delay: number): void {
+  thunder(delay: number, exposure = 1): void {
+    if (exposure <= 0.01) return
     this.sample(
       ['ambient/weather/thunder1.ogg', 'ambient/weather/thunder2.ogg', 'ambient/weather/thunder3.ogg'],
-      0.8,
+      0.8 * clamp(exposure, 0, 1),
       0.9 + Math.random() * 0.15,
       delay,
       undefined,
@@ -511,6 +512,10 @@ export class AudioMan {
     this.sample('random/chestopen.ogg', 0.38, 0.96 + Math.random() * 0.08, 0, undefined, 'block')
   }
 
+  chestClose(): void {
+    this.sample('random/chestclosed.ogg', 0.38, 0.96 + Math.random() * 0.08, 0, undefined, 'block')
+  }
+
   door(open: boolean): void {
     this.sample(`random/door_${open ? 'open' : 'close'}.ogg`, 0.45, 0.9 + Math.random() * 0.1, 0, undefined, 'block')
   }
@@ -540,7 +545,19 @@ export class AudioMan {
     this.sample(MOB_SOUNDS[kind][event], scaled, pitch, 0, spatialPosition, 'mob')
   }
 
-  updateAmbience(dt: number, opts: { wind: number; rain: number; night: number; underwater: boolean; clear: boolean }): void {
+  updateAmbience(dt: number, opts: {
+    wind: number
+    rain: number
+    exposure?: number
+    night: number
+    underwater: boolean
+    clear: boolean
+  }): void {
+    const weatherBus = this.buses.get('weather')
+    if (weatherBus) {
+      const target = this.soundVolume * clamp(opts.exposure ?? 1, 0, 1)
+      weatherBus.gain.value += (target - weatherBus.gain.value) * clamp(dt * 5, 0, 1)
+    }
     this.rainTarget = opts.underwater ? 0 : opts.rain * 0.2
     if (this.rainGain) {
       const rain = this.rainGain.gain

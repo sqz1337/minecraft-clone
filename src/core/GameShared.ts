@@ -58,7 +58,14 @@ export const SAVE_INTERVAL_SEC = 8
 export type OpenScreen =
   | { kind: 'inventory'; crafting: Crafting }
   | { kind: 'workbench'; crafting: Crafting }
-  | { kind: 'chest'; holder: CursorHolder; slots: Array<ItemStack | null>; parts: ChestState[]; double: boolean }
+  | {
+    kind: 'chest'
+    holder: CursorHolder
+    slots: Array<ItemStack | null>
+    parts: ChestState[]
+    positions: Array<[number, number, number]>
+    double: boolean
+  }
   | { kind: 'furnace'; holder: CursorHolder; state: FurnaceState; x: number; y: number; z: number }
   | { kind: 'enchant'; holder: EnchantingState; x: number; y: number; z: number }
   | { kind: 'trade'; holder: CursorHolder; profession: VillagerProfession }

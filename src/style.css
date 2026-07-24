@@ -818,6 +818,35 @@ select option { background: #000; }
 .heart .status-fill.half { background-position: -61px 0; }
 .food .status-fill.full { background-position: -52px -27px; }
 .food .status-fill.half { background-position: -61px -27px; }
+#attack-indicator {
+  --attack-charge: 1;
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 24px);
+  width: 16px;
+  height: 4px;
+  margin-left: -8px;
+  display: none;
+  background: url('/assets/minecraft/gui/crosshair_attack_indicator_background.png') no-repeat;
+  image-rendering: pixelated;
+  transform: scale(var(--mc-scale));
+  transform-origin: center;
+}
+#attack-indicator.visible { display: block; }
+#attack-indicator span {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: block;
+  width: calc(16px * var(--attack-charge));
+  height: 4px;
+  background: url('/assets/minecraft/gui/crosshair_attack_indicator_progress.png') no-repeat;
+  overflow: hidden;
+}
+#hunger-bar.depleted .status-icon:nth-child(3n) {
+  animation: hunger-empty-jitter 0.28s steps(2, end) infinite;
+}
+@keyframes hunger-empty-jitter { 50% { transform: translateY(-1px); } }
 .status-icon.armor { background-position: -16px -9px; }
 .armor .status-fill.full { background-position: -34px -9px; }
 .armor .status-fill.half { background-position: -25px -9px; }
@@ -825,8 +854,8 @@ select option { background: #000; }
 #survival-stats.hurt .heart .status-fill { filter: brightness(1.9); }
 #survival-stats.hurt .heart { animation: heart-hit 0.14s steps(2, end) 4; }
 @keyframes heart-hit { 50% { transform: translateY(-1px); } }
-.status-icon.air.empty { background-position: -16px -18px; }
-.status-icon.air.full { background-position: -25px -18px; }
+.status-icon.air.empty { background-position: -25px -18px; }
+.status-icon.air.full { background-position: -16px -18px; }
 .air-meter {
   position: absolute;
   right: 0; bottom: 41px;

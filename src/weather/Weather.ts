@@ -76,7 +76,7 @@ export class Weather {
     }
   }
 
-  update(dt: number, cold: boolean, audio: AudioMan, dry = false): void {
+  update(dt: number, cold: boolean, audio: AudioMan, dry = false, exposure = 1): void {
     this.nextChange -= dt
     if (this.nextChange <= 0) {
       // weighted random transition, biased toward clear-ish weather
@@ -103,8 +103,8 @@ export class Weather {
       this.lightningTimer -= dt
       if (this.lightningTimer <= 0) {
         this.lightningTimer = 4 + Math.random() * 11
-        U.uFlash.value = 1
-        audio.thunder(0.5 + Math.random() * 2.5)
+        U.uFlash.value = clamp(exposure, 0, 1)
+        audio.thunder(0.5 + Math.random() * 2.5, clamp(exposure, 0, 1))
       }
     }
   }

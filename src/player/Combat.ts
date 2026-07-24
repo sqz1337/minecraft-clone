@@ -2,7 +2,8 @@ import { ITEMS, type ArmorSlot } from '../world/Items'
 
 /** Vanilla entity attack reach is ~3 blocks (block reach stays 4.5). */
 export const MELEE_REACH = 3
-export const ATTACK_COOLDOWN = 0.5
+/** Modern Java sword attack speed is 1.6 attacks/second. */
+export const ATTACK_COOLDOWN = 1 / 1.6
 export const MAX_ARMOR_POINTS = 20
 export const ARMOR_SLOTS: readonly ArmorSlot[] = ['head', 'chest', 'legs', 'feet']
 
@@ -13,6 +14,12 @@ export function meleeDamage(itemId: number | null, critical = false, enchantment
   const base = tier === 'diamond' ? 7 : tier === 'iron' ? 6 : tier === 'stone' ? 5 : tier ? 4 : 1
   const enchanted = base + Math.max(0, enchantmentBonus)
   return critical ? Math.floor(enchanted * 1.5) : enchanted
+}
+
+/** Java-style attack strength curve: spam retains 20%, a full charge deals 100%. */
+export function chargedMeleeDamage(damage: number, charge: number): number {
+  const strength = Math.max(0, Math.min(1, charge))
+  return Math.max(0, damage * (0.2 + strength * strength * 0.8))
 }
 
 /** 20 armor points reduce 80% of incoming damage, matching the classic armor bar. */

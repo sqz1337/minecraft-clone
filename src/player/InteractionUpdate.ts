@@ -19,7 +19,10 @@ import type { EntityManager } from '../entities/EntityManager'
 import type { ProjectileManager } from '../entities/ProjectileManager'
 import { createExtrudedItemGeometry, setExtrudedItemUv } from '../gfx/HeldItemGeometry'
 import type { VanillaHeldItems } from '../gfx/VanillaHeldItems'
-import { ATTACK_COOLDOWN, MELEE_REACH, bowDamage, bowPower, bowPullSprite, bowVelocity, meleeDamage } from './Combat'
+import {
+  ATTACK_COOLDOWN, MELEE_REACH, bowDamage, bowPower, bowPullSprite,
+  bowVelocity, chargedMeleeDamage, meleeDamage
+} from './Combat'
 import {
   additiveFortuneDropCount, enchantmentLevel, fortuneDropCount, sharpnessBonus, shouldConsumeDurability
 } from './Enchantments'
@@ -56,12 +59,15 @@ export function installInteractionUpdate(InteractionClass: InteractionConstructo
       )
     }
 
-    this.attackCooldown = Math.max(0, this.attackCooldown - dt)
+    this.attackCooldown = Math.min(ATTACK_COOLDOWN, this.attackCooldown + dt)
     if (this.breaking && entityIsFirst) {
       this.attackingEntity = true
       this.crackMesh.visible = false
-      if (this.attackCooldown <= 0) {
-        const critical = !this.player.onGround && !this.player.inWater && this.player.vel.y < -0.08
+      if (this.attackQueued) {
+        this.attackQueued = false
+        const charge = this.attackStrength
+        const critical = charge >= 0.9 &&
+          !this.player.onGround && !this.player.inWater && this.player.vel.y < -0.08
         const stack = this.selectedStack
         const targetKind = entityHit!.entity.kind
         let enchantBonus = sharpnessBonus(enchantmentLevel(stack, 'sharpness'))
@@ -69,20 +75,29 @@ export function installInteractionUpdate(InteractionClass: InteractionConstructo
         if (smite > 0 && (targetKind === 'zombie' || targetKind === 'skeleton')) enchantBonus += 2.5 * smite
         const bane = enchantmentLevel(stack, 'bane_of_arthropods')
         if (bane > 0 && targetKind === 'spider') enchantBonus += 2.5 * bane
-        const damage = meleeDamage(this.selectedItem?.id ?? null, critical, enchantBonus)
-        const knockback = (this.player.sprinting ? 6.2 : 4.2) + enchantmentLevel(stack, 'knockback') * 1.2
+        const damage = chargedMeleeDamage(
+          meleeDamage(this.selectedItem?.id ?? null, critical, enchantBonus),
+          charge
+        )
+        const knockback = (
+          (this.player.sprinting ? 6.2 : 4.2) + enchantmentLevel(stack, 'knockback') * 1.2
+        ) * (0.2 + charge * 0.8)
+        this.attackCooldown = 0
         if (this.entities.damage(
           entityHit!.entity.id, damage, this.player.pos.x, this.player.pos.z, knockback,
           enchantmentLevel(stack, 'looting')
         )) {
           const fireAspect = enchantmentLevel(stack, 'fire_aspect')
           if (fireAspect > 0) this.entities.ignite(entityHit!.entity.id, fireAspect * 4)
-          this.attackCooldown = ATTACK_COOLDOWN
           this.swing()
           this.player.addExhaustion(0.1)
           if (this.selectedItem?.tool?.type === 'sword') this.damageHeldItem()
         }
       }
+    } else if (this.attackQueued) {
+      // A click that hit only air or terrain must not remain armed until the
+      // player later drags the crosshair across an entity.
+      this.attackQueued = false
     }
 
     // breaking
@@ -226,6 +241,16 @@ export function installInteractionUpdate(InteractionClass: InteractionConstructo
         if (CROSS[hit.id]) { px = hit.x; py = hit.y; pz = hit.z }
         const cur = this.world.getBlock(px, py, pz)
         const replaceable = cur !== placeable && (cur === B.AIR || isFluid(cur) || CROSS[cur])
+        const torchFacing: HorizontalFace | undefined = placeable === B.TORCH && hit.ny === 0
+          ? hit.nx > 0 ? 0 : hit.nx < 0 ? 1 : hit.nz > 0 ? 4 : 5
+          : undefined
+        const torchFits = placeable !== B.TORCH || (
+          hit.ny >= 0 &&
+          (hit.ny === 1
+            ? SOLID[this.world.getBlock(px, py - 1, pz)]
+            : torchFacing !== undefined &&
+              SOLID[this.world.getBlock(px - hit.nx, py, pz - hit.nz)])
+        )
         const vineFacing = placeable === B.VINE
           ? ([
               [1, 0, 0], [-1, 0, 1], [0, 1, 4], [0, -1, 5]
@@ -260,8 +285,9 @@ export function installInteractionUpdate(InteractionClass: InteractionConstructo
             this.swing()
             this.placeCooldown = 0.24
           }
-        } else if (replaceable && plantFits && !this.player.intersectsBlock(px, py, pz)) {
+        } else if (replaceable && plantFits && torchFits && !this.player.intersectsBlock(px, py, pz)) {
           const facing = placeable === B.VINE ? vineFacing
+            : placeable === B.TORCH ? torchFacing
             : isDirectionalBlock(placeable) ? this.facingTowardPlayer(px, pz) : undefined
           this.world.setBlock(px, py, pz, placeable, facing)
           if (placeable === B.CHEST && facing !== undefined) this.alignChestPair(px, py, pz, facing)

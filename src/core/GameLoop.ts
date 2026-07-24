@@ -238,6 +238,11 @@ export function installGameLoop(GameClass: GameConstructor): void {
       }
       this.player.update(dt)
       this.interaction.update(dt)
+      this.ui.updateAttackIndicator(
+        this.interaction.attackStrength,
+        this.interaction.selectedItem?.tool?.type === 'sword' &&
+          this.interaction.attackStrength < 0.999
+      )
       this.interaction.setFirstPersonVisible(this.player.cameraMode === 'first')
       this.playerRenderer.update(
         dt,
@@ -266,6 +271,7 @@ export function installGameLoop(GameClass: GameConstructor): void {
 
     const p = this.player.pos
     this.world.update(p.x, p.z, playing ? 6 : 2)
+    this.world.updateChestAnimations(dt)
     this.world.tickSimulation(playing || this.state === 'inventory' ? dt : 0, p.x, p.z)
     this.entities.update(playing ? dt : 0, {
       player: p,
@@ -279,22 +285,45 @@ export function installGameLoop(GameClass: GameConstructor): void {
       // Snow is precipitation but does not wet entities; only actual rain hurts endermen.
       raining: this.weather.out.rain > 0.25
     })
+    if (playing && !this.player.noclip && !this.player.ridingEntityId) {
+      const pushed = this.entities.resolvePlayerCollision(
+        this.player.pos,
+        this.player.vel,
+        (x, y, z) => this.player.collides(x, y, z) === null
+      )
+      if (pushed) this.player.syncCamera(0)
+    }
     this.player.syncRidingPose(this.entities.riderPose)
     this.projectiles.update(playing ? dt : 0, p)
 
     const biome = this.world.biomeAt(Math.floor(p.x), Math.floor(p.z))
     const cold = biome === BIOME.SNOW || p.y > 82
     const dry = biome === BIOME.DESERT
-    this.weather.update(playing ? dt : 0, cold, this.audio, dry)
+    const weatherSampleY = Math.floor(p.y + 1.62)
+    const weatherSamples = [
+      [0, 0, 0.6],
+      [2, 0, 0.1], [-2, 0, 0.1],
+      [0, 2, 0.1], [0, -2, 0.1]
+    ] as const
+    const weatherExposureTarget = weatherSamples.reduce(
+      (sum, [dx, dz, weight]) => sum +
+        this.world.getSkyLight(Math.floor(p.x) + dx, weatherSampleY, Math.floor(p.z) + dz) / 15 * weight,
+      0
+    )
+    this.weatherExposure += (weatherExposureTarget - this.weatherExposure) * clamp(dt * 5, 0, 1)
+    this.weather.update(playing ? dt : 0, cold, this.audio, dry, this.weatherExposure)
     const w = this.weather.out
+    const localRain = w.rain * this.weatherExposure
+    const localSnow = w.snow * this.weatherExposure
 
     const underwater = this.player.headUnderwater
+    this.materials.setWaterViewedFromUnderwater(underwater)
     this.env.setWeather(w)
     this.env.update(playing ? dt : 0, this.camera, p, underwater, this.world.renderDistance * CHUNK_SIZE)
     // rain wetness: surfaces get darker
     this.materials.solid.color.setScalar(1 - w.wetness * 0.12)
 
-    this.particles.update(dt, this.camera.position, w.rain, w.snow, U.uNight.value, underwater, w.wind)
+    this.particles.update(dt, this.camera.position, localRain, localSnow, U.uNight.value, underwater, w.wind)
     this.tntFx.update(playing ? dt : 0)
     this.critters.update(dt, p, U.uNight.value, w.rain + w.snow)
     this.ui.setUnderwater(underwater)
@@ -303,6 +332,7 @@ export function installGameLoop(GameClass: GameConstructor): void {
     this.audio.updateAmbience(dt, {
       wind: w.wind,
       rain: w.rain,
+      exposure: this.weatherExposure,
       night: U.uNight.value,
       underwater,
       clear: this.weather.kind === 'clear'
@@ -314,7 +344,13 @@ export function installGameLoop(GameClass: GameConstructor): void {
     this.hudTimer -= dt
     if (this.hudTimer <= 0) {
       this.hudTimer = 0.25
-      this.ui.updateSurvivalStats(this.player.health, this.player.hunger, this.player.air, this.equipment.armorPoints)
+      this.ui.updateSurvivalStats(
+        this.player.health,
+        this.player.hunger,
+        this.player.air,
+        this.equipment.armorPoints,
+        this.player.saturation
+      )
       this.ui.updateHud({
         fps: this.fpsEma,
         x: p.x, y: p.y, z: p.z,

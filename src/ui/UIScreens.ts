@@ -137,7 +137,7 @@ export function installUIScreens(UIClass: UIConstructor): void {
       craft.innerHTML = ''
       result.innerHTML = ''
       screen.crafting.grid.forEach((stack, index) => {
-        craft.appendChild(this.makeClickableSlot(stack, index, this.onCraftSlotClick))
+        craft.appendChild(this.makeClickableSlot(stack, index, this.onCraftSlotClick, true))
       })
       const output = screen.crafting.result
       const slot = this.makeSlot(output?.id ?? B.AIR, output, 0, true)
@@ -201,11 +201,31 @@ export function installUIScreens(UIClass: UIConstructor): void {
       offers.appendChild(button)
     })
   }
-  prototype.makeClickableSlot = function(this: UI, stack: ItemStack | null, index: number, handler: SlotHandler): HTMLDivElement {
+  prototype.makeClickableSlot = function(
+    this: UI,
+    stack: ItemStack | null,
+    index: number,
+    handler: SlotHandler,
+    craftRightDrag = false
+  ): HTMLDivElement {
     const slot = this.makeSlot(stack?.id ?? B.AIR, stack, index, true)
     slot.addEventListener('mousedown', (event) => {
-      if (event.button === 0 || event.button === 2) handler(index, event.button as SlotButton, event.shiftKey)
+      if (event.button !== 0 && event.button !== 2) return
+      if (craftRightDrag && event.button === 2) {
+        this.craftRightDragActive = true
+        this.craftRightDragVisited.clear()
+        this.craftRightDragVisited.add(index)
+      }
+      handler(index, event.button as SlotButton, event.shiftKey)
     })
+    if (craftRightDrag) {
+      slot.addEventListener('mouseenter', (event) => {
+        if (!this.craftRightDragActive || (event.buttons & 2) === 0 ||
+          this.craftRightDragVisited.has(index)) return
+        this.craftRightDragVisited.add(index)
+        handler(index, 2, false)
+      })
+    }
     return slot
   }
   prototype.renderEnchanting = function(this: UI, state: EnchantingState): void {

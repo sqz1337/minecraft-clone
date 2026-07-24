@@ -71,6 +71,7 @@ export function installInteractionHand(InteractionClass: InteractionConstructor)
   }
   prototype.primaryDown = function(this: Interaction): void {
     this.breaking = true
+    this.attackQueued = true
     this.attackingEntity = false
     // A left click always swings, even when the ray hits only air. Damage and
     // block breaking are still decided independently in update().
@@ -78,6 +79,7 @@ export function installInteractionHand(InteractionClass: InteractionConstructor)
   }
   prototype.primaryUp = function(this: Interaction): void {
     this.breaking = false
+    this.attackQueued = false
     this.breakProgress = 0
     this.crackMesh.visible = false
     this.attackingEntity = false
@@ -86,6 +88,10 @@ export function installInteractionHand(InteractionClass: InteractionConstructor)
     if (this.selectedItem?.ranged === 'bow') {
       this.chargingBow = true
       this.bowCharge = 0
+      this.placing = false
+      return
+    }
+    if (this.selectedItem?.tool?.type === 'sword') {
       this.placing = false
       return
     }

@@ -96,6 +96,7 @@ export function installGameLifecycle(GameClass: GameConstructor): void {
       saved?.blockFacings,
       saved?.scheduledTicks
     )
+    if (saved) this.world.migrateLegacyChestFacings(saved.player.x, saved.player.z)
     this.audio.setOcclusionProbe((listener, source) => {
       this.audioRayOrigin.set(listener.x, listener.y, listener.z)
       this.audioRayDir.set(source.x - listener.x, source.y - listener.y, source.z - listener.z)
@@ -235,18 +236,30 @@ export function installGameLifecycle(GameClass: GameConstructor): void {
       this.ui.toast('Item picked up')
     }
     this.experienceOrbs.onPickup = () => this.audio.experience()
-    this.player.onStatsChanged = () => this.ui.updateSurvivalStats(this.player.health, this.player.hunger, this.player.air, this.equipment.armorPoints)
+    this.player.onStatsChanged = () => this.ui.updateSurvivalStats(
+      this.player.health,
+      this.player.hunger,
+      this.player.air,
+      this.equipment.armorPoints,
+      this.player.saturation
+    )
     this.player.onDamage = () => this.ui.showDamage()
     this.player.onDeath = () => this.handlePlayerDeath()
     this.player.onExperienceChanged = () => this.ui.updateExperience(this.player.experienceLevel, this.player.experienceFraction)
     this.ui.configureGame(this.atlas, this.sprites, this.mode, this.inventory, this.equipment)
     this.ui.buildHotbar(this.atlas, this.interaction.currentHotbar)
-    this.ui.updateSurvivalStats(this.player.health, this.player.hunger, this.player.air, this.equipment.armorPoints)
+    this.ui.updateSurvivalStats(
+      this.player.health,
+      this.player.hunger,
+      this.player.air,
+      this.equipment.armorPoints,
+      this.player.saturation
+    )
     this.ui.updateExperience(this.player.experienceLevel, this.player.experienceFraction)
     this.bindMouse()
 
     // Resume at the saved chunk, otherwise pick a scenic first spawn.
-    const naturalSpawn = gen.findSpawn()
+    const naturalSpawn = await this.world.findSpawnAsync()
     this.worldSpawn = {
       x: naturalSpawn.x + 0.5,
       y: Math.max(gen.seaLevel, gen.heightAt(naturalSpawn.x, naturalSpawn.z)) + 1.05,

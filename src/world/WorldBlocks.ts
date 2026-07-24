@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { Chunk, CHUNK_SIZE, WORLD_HEIGHT, ChunkState } from './Chunk'
 import { WorldGen } from './WorldGen'
 import {
-  B, SOLID, OPAQUE, CROSS, GRAVITY, LIGHT_LEVEL, blockCollisionBox, isValidBlockId, isDirectionalBlock,
+  B, SOLID, OPAQUE, CROSS, GRAVITY, LIGHT_LEVEL, blockCollisionBox, torchSelectionBox, isValidBlockId, isDirectionalBlock,
   isHorizontalFace, isWheat, wheatAge, isFarmingPlant, isWater as isWaterBlock,
   isLava as isLavaBlock, isFluid, fluidLevel, fluidKind, fluidBlock, isFlammable,
   isLogBlock, isLeafBlock, isBedBlock, isDoorBlock, isDoorOpen, isDoorUpper, canSupportVine,
@@ -20,6 +20,65 @@ import { World } from './World'
 
 type WorldConstructor = { prototype: World }
 
+export function migrateLegacyChestFacings(
+  blockEdits: ReadonlyMap<string, ReadonlyMap<number, number>>,
+  blockFacings: Map<string, Map<number, HorizontalFace>>,
+  targetX: number,
+  targetZ: number
+): number {
+  const chests: Array<{
+    chunkKey: string
+    index: number
+    x: number
+    y: number
+    z: number
+  }> = []
+  const chestPositions = new Set<string>()
+  for (const [chunkKey, edits] of blockEdits) {
+    const match = /^(-?\d+),(-?\d+)$/.exec(chunkKey)
+    if (!match) continue
+    const cx = Number(match[1]), cz = Number(match[2])
+    for (const [index, id] of edits) {
+      if (id !== B.CHEST) continue
+      const y = index & (WORLD_HEIGHT - 1)
+      const column = index >> 7
+      const lx = column >> 4
+      const lz = column & (CHUNK_SIZE - 1)
+      const chest = {
+        chunkKey,
+        index,
+        x: cx * CHUNK_SIZE + lx,
+        y,
+        z: cz * CHUNK_SIZE + lz
+      }
+      chests.push(chest)
+      chestPositions.add(`${chest.x},${chest.y},${chest.z}`)
+    }
+  }
+
+  let migrated = 0
+  for (const chest of chests) {
+    let facings = blockFacings.get(chest.chunkKey)
+    if (facings?.has(chest.index)) continue
+    const pair = ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).find(
+      ([dx, dz]) => chestPositions.has(`${chest.x + dx},${chest.y},${chest.z + dz}`)
+    )
+    const axis = pair ? (pair[0] !== 0 ? 'z' : 'x') : undefined
+    const dx = targetX - (chest.x + 0.5)
+    const dz = targetZ - (chest.z + 0.5)
+    const facing: HorizontalFace = axis === 'x' || (!axis && Math.abs(dx) > Math.abs(dz))
+      ? dx >= 0 ? 0 : 1
+      : dz >= 0 ? 4 : 5
+    if (!facings) {
+      facings = new Map()
+      blockFacings.set(chest.chunkKey, facings)
+    }
+    facings.set(chest.index, facing)
+    migrated++
+  }
+  return migrated
+}
+
 export function installWorldBlocks(WorldClass: WorldConstructor): void {
   const prototype = WorldClass.prototype
   prototype.startGenerationWorker = function(this: World): void {
@@ -36,6 +95,20 @@ export function installWorldBlocks(WorldClass: WorldConstructor): void {
     } catch (error) {
       console.warn('Web Worker world generation is unavailable; using synchronous generation.', error)
     }
+  }
+  prototype.findSpawnAsync = function(this: World): Promise<{ x: number; z: number; yaw: number }> {
+    if (!this.generationWorker) return this.gen.findSpawnAsync()
+
+    const id = this.nextGenerationId++
+    return new Promise((resolve, reject) => {
+      this.pendingSpawnSearches.set(id, { resolve, reject })
+      try {
+        this.generationWorker!.postMessage({ type: 'find-spawn', id })
+      } catch (error) {
+        this.pendingSpawnSearches.delete(id)
+        void this.gen.findSpawnAsync().then(resolve, reject)
+      }
+    })
   }
   prototype.key = function(this: World, cx: number, cz: number): string { return cx + ',' + cz }
   prototype.getChunk = function(this: World, cx: number, cz: number): Chunk | undefined {
@@ -120,6 +193,11 @@ export function installWorldBlocks(WorldClass: WorldConstructor): void {
       out.push(tick.x, tick.y, tick.z, Math.max(1, tick.due - this.simulationTick), tick.kind)
     }
     return out
+  }
+  prototype.migrateLegacyChestFacings = function(this: World, targetX: number, targetZ: number): number {
+    const migrated = migrateLegacyChestFacings(this.blockEdits, this.blockFacings, targetX, targetZ)
+    if (migrated > 0) this.editsDirty = true
+    return migrated
   }
   prototype.getBlock = function(this: World, x: number, y: number, z: number): number {
     if (y < 0 || y >= WORLD_HEIGHT) return B.AIR
@@ -363,8 +441,12 @@ export function installWorldBlocks(WorldClass: WorldConstructor): void {
     const previousFacing = storedPreviousFacing ?? 4
     const nextFacing = isDirectionalBlock(id)
       ? (facing ?? (isDirectionalBlock(previousId) ? previousFacing : 4))
+      : id === B.TORCH ? (facing ?? null)
       : null
-    const facingChanged = nextFacing !== (isDirectionalBlock(previousId) ? previousFacing : null) ||
+    const previousStoredFacing = isDirectionalBlock(previousId)
+      ? previousFacing
+      : previousId === B.TORCH ? (storedPreviousFacing ?? null) : null
+    const facingChanged = nextFacing !== previousStoredFacing ||
       (id === B.VINE && nextFacing !== null && storedPreviousFacing === undefined)
     const blockChanged = previousId !== id
     if (!blockChanged && !facingChanged) return
@@ -383,10 +465,35 @@ export function installWorldBlocks(WorldClass: WorldConstructor): void {
       if (isFluid(id) && CROSS[previousId] && previousId !== B.FIRE) {
         this.onAutomaticBlockBreak(x, y, z, previousId)
       }
-      // breaking a support pops decorations, but fire owns its own support rules.
-      if (id === B.AIR && y + 1 < WORLD_HEIGHT && CROSS[c.get(lx, y + 1, lz)] && c.get(lx, y + 1, lz) !== B.FIRE) {
-        c.set(lx, y + 1, lz, B.AIR)
-        this.recordBlockEdit(c, Chunk.index(lx, y + 1, lz), B.AIR)
+      // Breaking a support pops decorations and reports every automatic break
+      // through the normal drop hook. Sugar cane is a vertical chain: removing
+      // any segment must also remove (and drop) every segment above it.
+      if (id === B.AIR) {
+        let aboveY = y + 1
+        while (aboveY < WORLD_HEIGHT) {
+          const aboveId = c.get(lx, aboveY, lz)
+          if (!CROSS[aboveId] || aboveId === B.FIRE) break
+          const aboveIndex = Chunk.index(lx, aboveY, lz)
+          c.set(lx, aboveY, lz, B.AIR)
+          c.randomTickIndices.delete(aboveIndex)
+          this.recordBlockEdit(c, aboveIndex, B.AIR)
+          this.onAutomaticBlockBreak(x, aboveY, z, aboveId)
+          if (aboveId !== B.SUGARCANE) break
+          aboveY++
+        }
+        for (const [dx, dz, torchFacing] of [
+          [1, 0, 0], [-1, 0, 1], [0, 1, 4], [0, -1, 5]
+        ] as const) {
+          const torchX = x + dx, torchZ = z + dz
+          if (this.getBlock(torchX, y, torchZ) !== B.TORCH) continue
+          const torchCx = Math.floor(torchX / CHUNK_SIZE), torchCz = Math.floor(torchZ / CHUNK_SIZE)
+          const torchLx = torchX - torchCx * CHUNK_SIZE, torchLz = torchZ - torchCz * CHUNK_SIZE
+          const storedTorchFacing = this.blockFacings.get(this.key(torchCx, torchCz))
+            ?.get(Chunk.index(torchLx, y, torchLz))
+          if (storedTorchFacing !== torchFacing) continue
+          this.setBlock(torchX, y, torchZ, B.AIR)
+          this.onAutomaticBlockBreak(torchX, y, torchZ, B.TORCH)
+        }
       }
       if (id === B.AIR) {
         this.settleFallingColumn(c, lx, y + 1, lz)
@@ -411,7 +518,7 @@ export function installWorldBlocks(WorldClass: WorldConstructor): void {
     // Vines need an explicit value even for face 4: unlike the other
     // directional blocks, a missing entry means a generated metadata-free
     // vine whose support must be inferred once by the mesher.
-    this.recordBlockFacing(c, index, nextFacing, id === B.VINE)
+    this.recordBlockFacing(c, index, nextFacing, id === B.VINE || id === B.TORCH || id === B.CHEST)
     // Lighting is updated immediately so gameplay queries stay correct, while
     // geometry rebuilds use the same per-frame budget as streamed chunks.
     this.refreshChangedBlock(c, lx, lz, true)
@@ -477,9 +584,16 @@ export function installWorldBlocks(WorldClass: WorldConstructor): void {
       if (t > maxDist) return null
       const id = this.getBlock(x, y, z)
       if (id !== B.AIR && ((includeFluids && isFluid(id)) || (SOLID[id] || CROSS[id] || isDoorBlock(id)))) {
-        const shape = (includeFluids && isFluid(id)) || CROSS[id]
-          ? { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }
-          : blockCollisionBox(id, this.getBlockFacing(x, y, z))
+        const cx = Math.floor(x / CHUNK_SIZE), cz = Math.floor(z / CHUNK_SIZE)
+        const storedFacing = id === B.TORCH
+          ? this.blockFacings.get(this.key(cx, cz))
+            ?.get(Chunk.index(x - cx * CHUNK_SIZE, y, z - cz * CHUNK_SIZE))
+          : undefined
+        const shape = id === B.TORCH
+          ? torchSelectionBox(storedFacing)
+          : (includeFluids && isFluid(id)) || CROSS[id]
+            ? { minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }
+            : blockCollisionBox(id, this.getBlockFacing(x, y, z))
         if (shape) {
           const exact = rayBoxHit(
             origin, dir,

@@ -17,6 +17,7 @@ import type { StructurePlan } from './structures/Types'
 import type { WorldGenWorkerResponse } from './WorldGenWorkerProtocol'
 import { RayHit, rayBoxHit, SerializedBlockEdits, SerializedBlockFacings, SerializedScheduledTicks, ScheduledBlockTick, SIMULATION_STEP, MAX_TICKS_PER_FRAME, RANDOM_TICKS_PER_SECTION, SECTION_HEIGHT, MOB_SIMULATION_RADIUS, MAX_PENDING_GENERATION, LIGHT_CELLS, LIGHT_CHANGED, LIGHT_BORDER_POS_X, LIGHT_BORDER_NEG_X, LIGHT_BORDER_POS_Z, LIGHT_BORDER_NEG_Z, LIGHT_BORDER_DIRECTIONS, scratchSky, scratchBlock, lightOpacity, wantsRandomTick } from './WorldShared'
 import { World } from './World'
+import { TexturedBoxBuilder } from './MesherModels'
 
 type WorldConstructor = { prototype: World }
 
@@ -165,6 +166,19 @@ export function installWorldLighting(WorldClass: WorldConstructor): void {
     return job
   }
   prototype.handleGenerationResponse = function(this: World, response: WorldGenWorkerResponse): void {
+    if (response.type === 'spawn-found' || response.type === 'spawn-error') {
+      const pendingSpawn = this.pendingSpawnSearches.get(response.id)
+      if (!pendingSpawn) return
+      this.pendingSpawnSearches.delete(response.id)
+      if (response.type === 'spawn-found') {
+        pendingSpawn.resolve({ x: response.x, z: response.z, yaw: response.yaw })
+      } else {
+        console.error(`Worker failed to find world spawn: ${response.message}`)
+        void this.gen.findSpawnAsync().then(pendingSpawn.resolve, pendingSpawn.reject)
+      }
+      return
+    }
+
     const pending = this.pendingGeneration.get(response.id)
     if (!pending) return
     this.pendingGeneration.delete(response.id)
@@ -185,6 +199,15 @@ export function installWorldLighting(WorldClass: WorldConstructor): void {
   prototype.stopGenerationWorker = function(this: World, fallbackPending: boolean): void {
     this.generationWorker?.terminate()
     this.generationWorker = null
+    const pendingSpawns = [...this.pendingSpawnSearches.values()]
+    this.pendingSpawnSearches.clear()
+    if (fallbackPending) {
+      for (const pending of pendingSpawns) {
+        void this.gen.findSpawnAsync().then(pending.resolve, pending.reject)
+      }
+    } else {
+      for (const pending of pendingSpawns) pending.reject(new Error('World generation stopped'))
+    }
     if (!fallbackPending) {
       this.pendingGeneration.clear()
       this.generationJobs.clear()
@@ -222,7 +245,7 @@ export function installWorldLighting(WorldClass: WorldConstructor): void {
       for (let i = 0; i + 1 < pairs.length; i += 2) {
         const index = pairs[i]
         const face = pairs[i + 1]
-        if (!Number.isInteger(index) || index < 0 || index >= maxIndex || !isHorizontalFace(face) || face === 4) continue
+        if (!Number.isInteger(index) || index < 0 || index >= maxIndex || !isHorizontalFace(face)) continue
         facings.set(index, face)
       }
       if (facings.size > 0) this.blockFacings.set(chunkKey, facings)
@@ -380,9 +403,107 @@ export function installWorldLighting(WorldClass: WorldConstructor): void {
       this.scene.add(m)
       chunk.meshes.xray = m
     }
+    this.syncChunkChestModels(chunk)
     chunk.state = ChunkState.MESHED
   }
+  prototype.syncChunkChestModels = function(this: World, chunk: Chunk): void {
+    this.removeChunkChestModels(chunk)
+    const chunkKey = World.ck(chunk.cx, chunk.cz)
+    const bx = chunk.cx * CHUNK_SIZE, bz = chunk.cz * CHUNK_SIZE
+    const facings = this.facingsForChunk(chunk.cx, chunk.cz)
+    const positionKey = (x: number, y: number, z: number): string => `${x},${y},${z}`
+    const rotationForFacing = (facing: HorizontalFace): number =>
+      facing === 5 ? Math.PI : facing === 0 ? Math.PI / 2 : facing === 1 ? -Math.PI / 2 : 0
+
+    for (let lx = 0; lx < CHUNK_SIZE; lx++) for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      for (let y = 0; y < WORLD_HEIGHT; y++) {
+        const index = Chunk.index(lx, y, lz)
+        if (chunk.blocks[index] !== B.CHEST) continue
+        const x = bx + lx, z = bz + lz
+        const pair = ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const)
+          .find(([dx, dz]) => this.getBlock(x + dx, y, z + dz) === B.CHEST)
+        const pairX = pair ? x + pair[0] : x
+        const pairZ = pair ? z + pair[1] : z
+        if (pair && !(x < pairX || (x === pairX && z < pairZ))) continue
+
+        let facing: HorizontalFace = facings?.get(index) ?? 4
+        // Only a pair constrains the facing: the seam axis must stay perpendicular
+        // to the front. A single chest keeps whatever it was placed with.
+        if (pair) {
+          if (pair[0] !== 0 && (facing === 0 || facing === 1)) facing = 4
+          if (pair[1] !== 0 && (facing === 4 || facing === 5)) facing = 0
+        }
+        const large = !!pair
+        const centerX = large ? (x + pairX + 1) / 2 : x + 0.5
+        const centerZ = large ? (z + pairZ + 1) / 2 : z + 0.5
+        const width = large ? 30 : 14
+        const textureWidth = large ? 128 : 64
+        const builder = new TexturedBoxBuilder()
+        // Local coordinates are relative to the rear hinge at z=0.
+        builder.box(0, 0, 7 / 16, width, 5, 14, 0, 0, textureWidth, 4)
+        builder.box(0, -3 / 16, 29 / 32, 2, 4, 1, 0, 0, textureWidth, 4)
+        const geometry = builder.build()
+        if (!geometry) continue
+        const material = large ? this.materials.largeChest : this.materials.chest
+        const lid = new THREE.Mesh(geometry, material)
+        lid.castShadow = true
+        lid.receiveShadow = true
+        const group = new THREE.Group()
+        group.position.set(centerX, y + 10 / 16, centerZ)
+        group.rotation.y = rotationForFacing(facing)
+        const pivot = new THREE.Group()
+        pivot.position.z = -7 / 16
+        pivot.add(lid)
+        group.add(pivot)
+        this.scene.add(group)
+        const blocks = [
+          positionKey(x, y, z),
+          ...(pair ? [positionKey(pairX, y, pairZ)] : [])
+        ]
+        const modelKey = blocks.join('|')
+        const open = blocks.some(block => this.openChestBlocks.has(block))
+        const angle = open ? Math.PI * 0.47 : 0
+        pivot.rotation.x = -angle
+        this.chestLidModels.set(modelKey, { group, pivot, angle, target: angle, chunkKey, blocks })
+      }
+    }
+  }
+  prototype.removeChunkChestModels = function(this: World, chunk: Chunk): void {
+    const chunkKey = World.ck(chunk.cx, chunk.cz)
+    for (const [key, model] of this.chestLidModels) {
+      if (model.chunkKey !== chunkKey) continue
+      this.scene.remove(model.group)
+      model.group.traverse(object => {
+        if (object instanceof THREE.Mesh) object.geometry.dispose()
+      })
+      this.chestLidModels.delete(key)
+    }
+  }
+  prototype.setChestOpen = function(
+    this: World,
+    positions: ReadonlyArray<readonly [number, number, number]>,
+    open: boolean
+  ): void {
+    for (const [x, y, z] of positions) {
+      const key = `${x},${y},${z}`
+      if (open) this.openChestBlocks.add(key)
+      else this.openChestBlocks.delete(key)
+    }
+    for (const model of this.chestLidModels.values()) {
+      if (!model.blocks.some(block => positions.some(([x, y, z]) => block === `${x},${y},${z}`))) continue
+      model.target = open ? Math.PI * 0.47 : 0
+    }
+  }
+  prototype.updateChestAnimations = function(this: World, dt: number): void {
+    const blend = 1 - Math.exp(-Math.max(0, dt) * 11)
+    for (const model of this.chestLidModels.values()) {
+      model.angle += (model.target - model.angle) * blend
+      if (Math.abs(model.target - model.angle) < 0.001) model.angle = model.target
+      model.pivot.rotation.x = -model.angle
+    }
+  }
   prototype.disposeChunkMeshes = function(this: World, chunk: Chunk): void {
+    this.removeChunkChestModels(chunk)
     for (const kind of [
       'solid', 'foliage', 'water', 'glass', 'emissive', 'furnaceFire', 'chest', 'largeChest', 'xray'
     ] as const) {

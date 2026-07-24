@@ -23,7 +23,7 @@ export function addBlockCuboid(
   const sx = shape.maxX - shape.minX
   const sy = shape.maxY - shape.minY
   const sz = shape.maxZ - shape.minZ
-  const lf = 0.28 + 0.72 * light / 15
+  const lf = 0.08 + 0.92 * light / 15
   for (let face = 0; face < FACES.length; face++) {
     const fd = FACES[face]
     const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, face))
@@ -43,6 +43,105 @@ export function addBlockCuboid(
     builder.quad(false)
   }
 }
+
+export function addTorchModel(
+  builder: GeomBuilder,
+  atlas: Atlas,
+  wx: number,
+  y: number,
+  wz: number,
+  wallFacing: HorizontalFace | undefined,
+  light: number
+): void {
+  const outwardX = wallFacing === 0 ? 1 : wallFacing === 1 ? -1 : 0
+  const outwardZ = wallFacing === 4 ? 1 : wallFacing === 5 ? -1 : 0
+  const wall = wallFacing !== undefined
+  // RenderBlocks uses four full-tile alpha-cutout quads. Mapping the same tile
+  // onto a tiny cuboid shrinks the two opaque centre pixels a second time and
+  // is what produced the almost wire-thin torch.
+  const topCenterX = wx + 0.5 - outwardX * (wall ? 0.1 : 0)
+  const topCenterZ = wz + 0.5 - outwardZ * (wall ? 0.1 : 0)
+  const bottomOffsetX = -outwardX * (wall ? 0.4 : 0)
+  const bottomOffsetZ = -outwardZ * (wall ? 0.4 : 0)
+  const baseY = y + (wall ? 0.2 : 0)
+  const topY = baseY + 1
+  const half = 1 / 16
+  const [u0, v0, u1, v1] = atlas.uvRect(tileFor(B.TORCH, 0))
+  const lf = Math.min(1, 0.35 + 0.75 * light / 15)
+  const addSide = (
+    bottomA: readonly [number, number],
+    bottomB: readonly [number, number],
+    topA: readonly [number, number],
+    topB: readonly [number, number],
+    normal: readonly [number, number, number]
+  ): void => {
+    const positions = [bottomA, bottomB, topA, topB]
+    const uvs = [[u0, v0], [u1, v0], [u0, v1], [u1, v1]] as const
+    for (let i = 0; i < 4; i++) {
+      const [x, z] = positions[i]
+      builder.vertex(
+        x, i < 2 ? baseY : topY, z,
+        normal[0], normal[1], normal[2],
+        uvs[i][0], uvs[i][1],
+        lf, lf, lf, 0
+      )
+    }
+    builder.quad(false)
+  }
+  addSide(
+    [topCenterX - half + bottomOffsetX, topCenterZ - 0.5 + bottomOffsetZ],
+    [topCenterX - half + bottomOffsetX, topCenterZ + 0.5 + bottomOffsetZ],
+    [topCenterX - half, topCenterZ - 0.5],
+    [topCenterX - half, topCenterZ + 0.5],
+    [-1, 0, 0]
+  )
+  addSide(
+    [topCenterX + half + bottomOffsetX, topCenterZ + 0.5 + bottomOffsetZ],
+    [topCenterX + half + bottomOffsetX, topCenterZ - 0.5 + bottomOffsetZ],
+    [topCenterX + half, topCenterZ + 0.5],
+    [topCenterX + half, topCenterZ - 0.5],
+    [1, 0, 0]
+  )
+  addSide(
+    [topCenterX - 0.5 + bottomOffsetX, topCenterZ + half + bottomOffsetZ],
+    [topCenterX + 0.5 + bottomOffsetX, topCenterZ + half + bottomOffsetZ],
+    [topCenterX - 0.5, topCenterZ + half],
+    [topCenterX + 0.5, topCenterZ + half],
+    [0, 0, 1]
+  )
+  addSide(
+    [topCenterX + 0.5 + bottomOffsetX, topCenterZ - half + bottomOffsetZ],
+    [topCenterX - 0.5 + bottomOffsetX, topCenterZ - half + bottomOffsetZ],
+    [topCenterX + 0.5, topCenterZ - half],
+    [topCenterX - 0.5, topCenterZ - half],
+    [0, 0, -1]
+  )
+
+  const capY = baseY + 0.625
+  const capX = topCenterX + bottomOffsetX * 0.375
+  const capZ = topCenterZ + bottomOffsetZ * 0.375
+  const du = u1 - u0, dv = v1 - v0
+  const capU0 = u0 + du * 7 / 16, capU1 = u0 + du * 9 / 16
+  const capV0 = v1 - dv * 8 / 16, capV1 = v1 - dv * 6 / 16
+  const capPositions = [
+    [capX - half, capZ - half],
+    [capX - half, capZ + half],
+    [capX + half, capZ - half],
+    [capX + half, capZ + half]
+  ] as const
+  const capUvs = [
+    [capU0, capV0], [capU0, capV1], [capU1, capV0], [capU1, capV1]
+  ] as const
+  for (let i = 0; i < 4; i++) {
+    builder.vertex(
+      capPositions[i][0], capY, capPositions[i][1],
+      0, 1, 0,
+      capUvs[i][0], capUvs[i][1],
+      1, 1, 1, 0
+    )
+  }
+  builder.quad(false)
+}
 export function addDoorBlock(
   builder: GeomBuilder,
   atlas: Atlas,
@@ -55,7 +154,7 @@ export function addDoorBlock(
 ): void {
   const shape = doorCollisionBox(id, facing)
   const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, facing, facing))
-  const lf = 0.28 + 0.72 * light / 15
+  const lf = 0.08 + 0.92 * light / 15
   const sizeX = shape.maxX - shape.minX
   const sizeZ = shape.maxZ - shape.minZ
   const thinX = sizeX < sizeZ
@@ -93,7 +192,7 @@ export function addBedBlock(
   sample: (x: number, y: number, z: number) => number
 ): void {
   const h = 0.5625
-  const lf = 0.28 + 0.72 * light / 15
+  const lf = 0.08 + 0.92 * light / 15
 
   const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 2, facing))
   // RenderBlocks rotates the source tile's horizontal axis along the bed.
@@ -218,10 +317,10 @@ export class TexturedBoxBuilder {
     const rects: PixelRect[] = [
       [f2, vertical, dz, dy],
       [u, vertical, dz, dy],
-      [f2, v, f3 - f2, dz],
       [f1, v, f2 - f1, dz],
-      [f4, vertical, dx, dy],
-      [f1, vertical, dx, dy]
+      [f2, v, f3 - f2, dz],
+      [f1, vertical, dx, dy],
+      [f4, vertical, dx, dy]
     ]
     const corners = [
       [[x1, y0, z1], [x1, y0, z0], [x1, y1, z1], [x1, y1, z0]],
@@ -270,7 +369,4 @@ export function addChestModel(
   const width = large ? 30 : 14
   const textureWidth = large ? 128 : 64
   builder.box(centerX, y, centerZ, width, 10, 14, 0, 19, textureWidth, facing)
-  builder.box(centerX, y + 10 / 16, centerZ, width, 5, 14, 0, 0, textureWidth, facing)
-  const [latchX, latchZ] = offsetCenter(centerX, centerZ, 0, 15 / 32, facing)
-  builder.box(latchX, y + 7 / 16, latchZ, 2, 4, 1, 0, 0, textureWidth, facing)
 }

@@ -183,6 +183,10 @@ export class UI {
 
   recipePreviewIndex = 0
 
+  craftRightDragActive = false
+
+  craftRightDragVisited = new Set<number>()
+
   inventoryCursor = el<HTMLDivElement>('inventory-cursor')
 
   hud = el<HTMLDivElement>('hud')
@@ -206,6 +210,8 @@ export class UI {
   experienceBar = el<HTMLDivElement>('experience-bar')
 
   experienceLevelEl = el<HTMLDivElement>('experience-level')
+
+  attackIndicator = el<HTMLDivElement>('attack-indicator')
 
   toastEl = el<HTMLDivElement>('toast')
 
@@ -283,6 +289,14 @@ export class UI {
         if (button && !button.disabled) this.onButtonClick()
       }, true)
       this.inventoryScreen.addEventListener('contextmenu', (event) => event.preventDefault())
+      window.addEventListener('mouseup', () => {
+        this.craftRightDragActive = false
+        this.craftRightDragVisited.clear()
+      })
+      window.addEventListener('blur', () => {
+        this.craftRightDragActive = false
+        this.craftRightDragVisited.clear()
+      })
       this.inventoryScreen.addEventListener('mousedown', (event) => {
         if (event.target === this.inventoryScreen && (event.button === 0 || event.button === 2)) {
           this.onOutsideInventoryClick(event.button as SlotButton)
@@ -415,7 +429,12 @@ export interface UI {
   buildHotbar(atlas: Atlas, blocks?: readonly number[]): void
   renderScreen(): void
   renderTrades(profession: VillagerProfession): void
-  makeClickableSlot(stack: ItemStack | null, index: number, handler: SlotHandler): HTMLDivElement
+  makeClickableSlot(
+    stack: ItemStack | null,
+    index: number,
+    handler: SlotHandler,
+    craftRightDrag?: boolean
+  ): HTMLDivElement
   renderEnchanting(state: EnchantingState): void
   renderRecipeBook(crafting: Crafting): void
   setupRecipeScroll(): void
@@ -435,8 +454,9 @@ export interface UI {
   makeSlot(id: number, stack: ItemStack | null, index: number, inventorySlot: boolean): HTMLDivElement
   renderCursor(): void
   setSelectedSlot(index: number): void
-  updateSurvivalStats(health: number, hunger: number, air: number, armor?: number): void
+  updateSurvivalStats(health: number, hunger: number, air: number, armor?: number, saturation?: number): void
   updateExperience(level: number, fraction: number): void
+  updateAttackIndicator(charge: number, visible: boolean): void
   statusIcons(kind: 'heart' | 'food' | 'armor', value: number): string
   openWorldSelect(): Promise<void>
   renderWorldList(): void

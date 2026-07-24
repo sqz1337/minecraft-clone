@@ -24,6 +24,67 @@ import { SEA_LEVEL, LEGACY_SEA_LEVEL, CURRENT_WORLD_GEN_VERSION, WorldGenVersion
 import type { WorldGen } from './WorldGen'
 
 type WorldGenConstructor = { prototype: WorldGen }
+type SpawnPoint = { x: number; z: number; yaw: number }
+type ScoredSpawnPoint = SpawnPoint & { score: number }
+
+function spawnCandidate(gen: WorldGen, i: number): ScoredSpawnPoint | null {
+  const x = Math.round((hash01(i, 17, gen.seedNum ^ 0xf00d) - 0.5) * 900)
+  const z = Math.round((hash01(i, 71, gen.seedNum ^ 0xbeef) - 0.5) * 900)
+  const info = gen.columnInfo(x, z)
+  if (info.height < gen.seaLevel + 6 || info.height > gen.seaLevel + 48) return null
+  if (info.biome === BIOME.DESERT || info.biome === BIOME.OCEAN || info.biome === BIOME.RIVER ||
+    info.biome === BIOME.SWAMP || info.biome === BIOME.MUSHROOM) return null
+
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dz = -2; dz <= 2; dz++) {
+      if (gen.treeAt(x + dx, z + dz)) return null
+    }
+  }
+
+  let bestDir = -1, bestDirScore = -1
+  for (let d = 0; d < 8; d++) {
+    const ang = d * Math.PI / 4
+    let waterBonus = 0, dropBonus = 0, treeBonus = 0
+    for (let step = 2; step <= 7; step++) {
+      const sx = Math.round(x + Math.cos(ang) * step * 14)
+      const sz = Math.round(z + Math.sin(ang) * step * 14)
+      const sample = gen.columnInfo(sx, sz)
+      if (sample.height < gen.seaLevel) waterBonus += 4
+      if (sample.height < info.height - 6) dropBonus += 1.5
+      if (sample.treeDensity > 0.01) treeBonus += 1
+    }
+    const directionScore = waterBonus + dropBonus + treeBonus
+    if (directionScore > bestDirScore) {
+      bestDirScore = directionScore
+      bestDir = d
+    }
+  }
+
+  const vx = Math.floor(Math.floor(x / CHUNK_SIZE) / VILLAGE_SPACING)
+  const vz = Math.floor(Math.floor(z / CHUNK_SIZE) / VILLAGE_SPACING)
+  let villageBonus = 0
+  for (let ax = vx - 1; ax <= vx + 1 && villageBonus === 0; ax++) {
+    for (let az = vz - 1; az <= vz + 1; az++) {
+      const village = gen.villageIn(ax, az)
+      if (village && Math.hypot(village.centerX - x, village.centerZ - z) < 160) {
+        villageBonus = 6
+        break
+      }
+    }
+  }
+
+  const score = bestDirScore
+    + villageBonus
+    + Math.min(info.height - gen.seaLevel, 26) * 0.25
+    + (info.biome === BIOME.FOREST || info.biome === BIOME.PLAINS ? 3 : 0)
+    + (info.biome === BIOME.SNOW ? -3 : 0)
+  const ang = bestDir * Math.PI / 4
+  return { x, z, yaw: Math.atan2(-Math.cos(ang), -Math.sin(ang)), score }
+}
+
+function spawnResult(best: ScoredSpawnPoint | null): SpawnPoint {
+  return best ? { x: best.x, z: best.z, yaw: best.yaw } : { x: 8, z: 8, yaw: 0 }
+}
 
 export function installWorldGenStructures(WorldGenClass: WorldGenConstructor): void {
   const prototype = WorldGenClass.prototype
@@ -165,65 +226,25 @@ export function installWorldGenStructures(WorldGenClass: WorldGenConstructor): v
   prototype.nearestStronghold = function(this: WorldGen, x: number, z: number): { x: number; z: number } | null {
     return this.structureIndex.nearestStronghold(x, z)
   }
-  prototype.findSpawn = function(this: WorldGen): { x: number, z: number, yaw: number } {
-    let best: { x: number, z: number, yaw: number, score: number } | null = null
+  prototype.findSpawn = function(this: WorldGen): SpawnPoint {
+    let best: ScoredSpawnPoint | null = null
     for (let i = 0; i < 260; i++) {
-      const x = Math.round((hash01(i, 17, this.seedNum ^ 0xf00d) - 0.5) * 900)
-      const z = Math.round((hash01(i, 71, this.seedNum ^ 0xbeef) - 0.5) * 900)
-      const info = this.columnInfo(x, z)
-      if (info.height < this.seaLevel + 6 || info.height > this.seaLevel + 48) continue
-      if (info.biome === BIOME.DESERT || info.biome === BIOME.OCEAN || info.biome === BIOME.RIVER ||
-        info.biome === BIOME.SWAMP || info.biome === BIOME.MUSHROOM) continue
-      // don't spawn inside a tree canopy
-      let treeTooClose = false
-      for (let dx = -2; dx <= 2 && !treeTooClose; dx++) {
-        for (let dz = -2; dz <= 2 && !treeTooClose; dz++) {
-          if (this.treeAt(x + dx, z + dz)) treeTooClose = true
-        }
-      }
-      if (treeTooClose) continue
-      // look for water and lower ground in 8 directions
-      let bestDir = -1, bestDirScore = -1
-      for (let d = 0; d < 8; d++) {
-        const ang = d * Math.PI / 4
-        let waterBonus = 0, dropBonus = 0, treeBonus = 0
-        for (let step = 2; step <= 7; step++) {
-          const sx = Math.round(x + Math.cos(ang) * step * 14)
-          const sz = Math.round(z + Math.sin(ang) * step * 14)
-          const si = this.columnInfo(sx, sz)
-          if (si.height < this.seaLevel) waterBonus += 4
-          if (si.height < info.height - 6) dropBonus += 1.5
-          if (si.treeDensity > 0.01) treeBonus += 1
-        }
-        const ds = waterBonus + dropBonus + treeBonus
-        if (ds > bestDirScore) { bestDirScore = ds; bestDir = d }
-      }
-      // a nearby village makes the friendliest possible start
-      const vx = Math.floor(Math.floor(x / CHUNK_SIZE) / VILLAGE_SPACING)
-      const vz = Math.floor(Math.floor(z / CHUNK_SIZE) / VILLAGE_SPACING)
-      let villageBonus = 0
-      for (let ax = vx - 1; ax <= vx + 1 && villageBonus === 0; ax++) {
-        for (let az = vz - 1; az <= vz + 1; az++) {
-          const village = this.villageIn(ax, az)
-          if (village && Math.hypot(village.centerX - x, village.centerZ - z) < 160) {
-            villageBonus = 6
-            break
-          }
-        }
-      }
-      const score = bestDirScore
-        + villageBonus
-        + Math.min(info.height - this.seaLevel, 26) * 0.25
-        + (info.biome === BIOME.FOREST || info.biome === BIOME.PLAINS ? 3 : 0)
-        + (info.biome === BIOME.SNOW ? -3 : 0)
-      if (!best || score > best.score) {
-        // yaw=0 faces -Z, forward = (-sin yaw, 0, -cos yaw); aim it along (cos ang, 0, sin ang)
-        const ang = bestDir * Math.PI / 4
-        const yaw = Math.atan2(-Math.cos(ang), -Math.sin(ang))
-        best = { x, z, yaw, score }
+      const candidate = spawnCandidate(this, i)
+      if (candidate && (!best || candidate.score > best.score)) best = candidate
+    }
+    return spawnResult(best)
+  }
+  prototype.findSpawnAsync = async function(this: WorldGen): Promise<SpawnPoint> {
+    let best: ScoredSpawnPoint | null = null
+    let lastYield = performance.now()
+    for (let i = 0; i < 260; i++) {
+      const candidate = spawnCandidate(this, i)
+      if (candidate && (!best || candidate.score > best.score)) best = candidate
+      if (performance.now() - lastYield >= 12) {
+        await new Promise<void>(resolve => setTimeout(resolve, 0))
+        lastYield = performance.now()
       }
     }
-    if (!best) return { x: 8, z: 8, yaw: 0 }
-    return { x: best.x, z: best.z, yaw: best.yaw }
+    return spawnResult(best)
   }
 }

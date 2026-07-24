@@ -19,7 +19,10 @@ import type { EntityManager } from '../entities/EntityManager'
 import type { ProjectileManager } from '../entities/ProjectileManager'
 import { createExtrudedItemGeometry, setExtrudedItemUv } from '../gfx/HeldItemGeometry'
 import type { VanillaHeldItems } from '../gfx/VanillaHeldItems'
-import { ATTACK_COOLDOWN, MELEE_REACH, bowDamage, bowPower, bowPullSprite, bowVelocity, meleeDamage } from './Combat'
+import {
+  ATTACK_COOLDOWN, MELEE_REACH, bowDamage, bowPower, bowPullSprite,
+  bowVelocity, meleeDamage
+} from './Combat'
 import {
   additiveFortuneDropCount, enchantmentLevel, fortuneDropCount, sharpnessBonus, shouldConsumeDurability
 } from './Enchantments'
@@ -83,7 +86,9 @@ export class Interaction {
 
   eatSoundTimer = 0
 
-  attackCooldown = 0
+  attackCooldown = ATTACK_COOLDOWN
+
+  attackQueued = false
 
   attackingEntity = false
 
@@ -188,6 +193,8 @@ export class Interaction {
     }
 
   get swingProgress(): number { return 1 - this.handSwing }
+
+  get attackStrength(): number { return Math.min(1, this.attackCooldown / ATTACK_COOLDOWN) }
 
   get heldViewMesh(): THREE.Mesh | null { return this.hand }
 

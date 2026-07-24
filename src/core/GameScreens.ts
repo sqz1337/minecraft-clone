@@ -91,7 +91,8 @@ export function installGameScreens(GameClass: GameConstructor): void {
     const double = parts.length > 1
     const slots = double ? parts.flatMap(part => part.slots) : parts[0].slots
     this.audio.chestOpen()
-    this.openScreen({ kind: 'chest', holder: { cursor: null }, slots, parts, double })
+    this.world.setChestOpen(positions, true)
+    this.openScreen({ kind: 'chest', holder: { cursor: null }, slots, parts, positions, double })
   }
   prototype.openTrading = function(this: Game, entityId: string): void {
     const entity = this.entities.snapshotById(entityId)
@@ -160,6 +161,10 @@ export function installGameScreens(GameClass: GameConstructor): void {
   prototype.closeScreen = function(this: Game): void {
     const screen = this.screen
     if (screen) {
+      if (screen.kind === 'chest') {
+        this.world.setChestOpen(screen.positions, false)
+        this.audio.chestClose()
+      }
       if (screen.kind === 'inventory' || screen.kind === 'workbench') {
         screen.crafting.returnAll(this.inventory, (stack) => this.spillStack(stack))
       } else if (screen.kind === 'chest' || screen.kind === 'furnace' || screen.kind === 'enchant' || screen.kind === 'trade') {

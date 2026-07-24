@@ -28,6 +28,15 @@ import type { Interaction } from './Interaction'
 
 type InteractionConstructor = { prototype: Interaction }
 
+export function facingOppositeLook(lookX: number, lookZ: number, axis?: 'x' | 'z'): HorizontalFace {
+  const towardPlayerX = -lookX
+  const towardPlayerZ = -lookZ
+  if (axis === 'x' || (!axis && Math.abs(towardPlayerX) > Math.abs(towardPlayerZ))) {
+    return towardPlayerX >= 0 ? 0 : 1
+  }
+  return towardPlayerZ >= 0 ? 4 : 5
+}
+
 export function installInteractionItems(InteractionClass: InteractionConstructor): void {
   const prototype = InteractionClass.prototype
   prototype.chestFits = function(this: Interaction, px: number, py: number, pz: number): boolean {
@@ -45,11 +54,9 @@ export function installInteractionItems(InteractionClass: InteractionConstructor
     }
     return neighbors <= 1
   }
-  prototype.facingTowardPlayer = function(this: Interaction, px: number, pz: number, axis?: 'x' | 'z'): HorizontalFace {
-    const dx = this.player.pos.x - (px + 0.5)
-    const dz = this.player.pos.z - (pz + 0.5)
-    if (axis === 'x' || (!axis && Math.abs(dx) > Math.abs(dz))) return dx >= 0 ? 0 : 1
-    return dz >= 0 ? 4 : 5
+  prototype.facingTowardPlayer = function(this: Interaction, _px: number, _pz: number, axis?: 'x' | 'z'): HorizontalFace {
+    this.aimDirection(this.rayDir)
+    return facingOppositeLook(this.rayDir.x, this.rayDir.z, axis)
   }
   prototype.alignChestPair = function(this: Interaction, px: number, py: number, pz: number, placedFacing: HorizontalFace): void {
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {

@@ -22,6 +22,38 @@ export const CHEST_COLLISION_BOX: BlockCollisionBox = Object.freeze({
   minX: 1 / 16, minY: 0, minZ: 1 / 16,
   maxX: 15 / 16, maxY: 14 / 16, maxZ: 15 / 16
 })
+export function torchSelectionBox(facing?: HorizontalFace): BlockCollisionBox {
+  const wallRadius = 0.15
+  if (facing === 0) {
+    return {
+      minX: 0, minY: 0.2, minZ: 0.5 - wallRadius,
+      maxX: wallRadius * 2, maxY: 0.8, maxZ: 0.5 + wallRadius
+    }
+  }
+  if (facing === 1) {
+    return {
+      minX: 1 - wallRadius * 2, minY: 0.2, minZ: 0.5 - wallRadius,
+      maxX: 1, maxY: 0.8, maxZ: 0.5 + wallRadius
+    }
+  }
+  if (facing === 4) {
+    return {
+      minX: 0.5 - wallRadius, minY: 0.2, minZ: 0,
+      maxX: 0.5 + wallRadius, maxY: 0.8, maxZ: wallRadius * 2
+    }
+  }
+  if (facing === 5) {
+    return {
+      minX: 0.5 - wallRadius, minY: 0.2, minZ: 1 - wallRadius * 2,
+      maxX: 0.5 + wallRadius, maxY: 0.8, maxZ: 1
+    }
+  }
+  const floorRadius = 0.1
+  return {
+    minX: 0.5 - floorRadius, minY: 0, minZ: 0.5 - floorRadius,
+    maxX: 0.5 + floorRadius, maxY: 0.6, maxZ: 0.5 + floorRadius
+  }
+}
 export function doorCollisionBox(id: number, facing: HorizontalFace = 4): BlockCollisionBox {
   const openFacing: Record<HorizontalFace, HorizontalFace> = { 0: 5, 1: 4, 4: 0, 5: 1 }
   const planeFacing = isDoorOpen(id) ? openFacing[facing] : facing

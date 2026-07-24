@@ -8,8 +8,15 @@ import { GRASS_TINT } from './WorldGen'
 import { hash301, hash01 } from '../util/math'
 import type { World } from './World'
 import type { Atlas } from '../gfx/Atlas'
-import { ChunkGeoms, FaceDef, FACES, AO_CURVE, WATER_SURFACE, GeomBuilder, WaterBuilder, solidBuilder, foliageBuilder, glassBuilder, emissiveBuilder, furnaceFireBuilder, xrayBuilder, waterBuilder } from './MesherShared'
-import { addBlockCuboid, addDoorBlock, addBedBlock, PixelRect, TexturedBoxBuilder, offsetCenter, addChestModel } from './MesherModels'
+import {
+  ChunkGeoms, FaceDef, FACES, AO_CURVE, WATER_SURFACE, GeomBuilder, WaterBuilder,
+  classicBlockLightColor, solidBuilder, foliageBuilder, glassBuilder, emissiveBuilder,
+  furnaceFireBuilder, xrayBuilder, waterBuilder
+} from './MesherShared'
+import {
+  addBlockCuboid, addTorchModel, addDoorBlock, addBedBlock, PixelRect,
+  TexturedBoxBuilder, offsetCenter, addChestModel
+} from './MesherModels'
 
 export * from './MesherShared'
 export * from './MesherModels'
@@ -55,6 +62,17 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
     const index = ((((lx - ncx * CHUNK_SIZE) << 4) | (lz - ncz * CHUNK_SIZE)) << 7) | wy
     const sky = c.skyLight[index], block = c.blockLight[index]
     return sky > block ? sky : block
+  }
+
+  const sampleBlockLight = (wx: number, wy: number, wz: number): number => {
+    if (wy < 0 || wy >= WORLD_HEIGHT) return 0
+    const lx = wx - bx, lz = wz - bz
+    const ncx = lx < 0 ? -1 : lx >= CHUNK_SIZE ? 1 : 0
+    const ncz = lz < 0 ? -1 : lz >= CHUNK_SIZE ? 1 : 0
+    const c = hood[(ncz + 1) * 3 + (ncx + 1)]
+    if (!c) return 0
+    const index = ((((lx - ncx * CHUNK_SIZE) << 4) | (lz - ncz * CHUNK_SIZE)) << 7) | wy
+    return c.blockLight[index]
   }
 
   const solidForAO = (wx: number, wy: number, wz: number): boolean => OPAQUE[sample(wx, wy, wz)]
@@ -132,11 +150,15 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           const topH = surface ? WATER_SURFACE * (8 - fluidLevel(id)) / 8 : 1
           const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 0))
           if (surface && !OPAQUE[above]) {
+            let waterDepth = 1
+            for (let sy = y - 1; sy >= 0 && waterDepth < 32 && isWater(sample(wx, sy, wz)); sy--) {
+              waterDepth++
+            }
             // top face — tile the still-water texture once per block
-            water.vertex(wx, y + topH, wz, 0, 1, 0, u0, v0, 1)
-            water.vertex(wx, y + topH, wz + 1, 0, 1, 0, u0, v1, 1)
-            water.vertex(wx + 1, y + topH, wz, 0, 1, 0, u1, v0, 1)
-            water.vertex(wx + 1, y + topH, wz + 1, 0, 1, 0, u1, v1, 1)
+            water.vertex(wx, y + topH, wz, 0, 1, 0, u0, v0, 1, waterDepth)
+            water.vertex(wx, y + topH, wz + 1, 0, 1, 0, u0, v1, 1, waterDepth)
+            water.vertex(wx + 1, y + topH, wz, 0, 1, 0, u1, v0, 1, waterDepth)
+            water.vertex(wx + 1, y + topH, wz + 1, 0, 1, 0, u1, v1, 1, waterDepth)
             water.quad()
           }
           // side + bottom faces against air, plus lip faces down to lower flows
@@ -212,11 +234,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
         }
 
         if (id === B.TORCH) {
-          addBlockCuboid(
-            emissive, atlas, wx, y, wz, id,
-            { minX: 7 / 16, minY: 0, minZ: 7 / 16, maxX: 9 / 16, maxY: 10 / 16, maxZ: 9 / 16 },
-            sampleLight(wx, y + 1, wz)
-          )
+          addTorchModel(emissive, atlas, wx, y, wz, facings?.get(colBase | y), sampleLight(wx, y + 1, wz))
           continue
         }
 
@@ -225,7 +243,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           // textures never merge into an opaque cube or a neighboring block.
           const inset = 1 / 16
           const light = sampleLight(wx, y + 1, wz)
-          const lightFactor = 0.28 + 0.72 * light / 15
+          const lightFactor = 0.08 + 0.92 * light / 15
           for (let f = 0; f < 6; f++) {
             const fd = FACES[f]
             const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, f))
@@ -249,7 +267,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           // A lily pad is a paper-thin, double-sided surface just above water.
           const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 2))
           const light = sampleLight(wx, y + 1, wz)
-          const lightFactor = 0.28 + 0.72 * light / 15
+          const lightFactor = 0.08 + 0.92 * light / 15
           const r = 0x20 / 255 * lightFactor
           const g = 0x80 / 255 * lightFactor
           const bcol = 0x30 / 255 * lightFactor
@@ -285,7 +303,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           }
           const [u0, v0, u1, v1] = atlas.uvRect(tileFor(id, 0))
           const light = sampleLight(wx, y, wz)
-          const lightFactor = 0.28 + 0.72 * light / 15
+          const lightFactor = 0.08 + 0.92 * light / 15
           const r = tint[0] * 1.35 * lightFactor
           const g = tint[1] * 1.35 * lightFactor
           const bcol = tint[2] * 1.35 * lightFactor
@@ -335,7 +353,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           const jz = (hash01(wx, wz, seed ^ 0x72) - 0.5) * 0.3
           const useTint = id === B.TALLGRASS || id === B.FERN
           const light = sampleLight(wx, y, wz)
-          const lightFactor = 0.28 + 0.72 * light / 15
+          const lightFactor = 0.08 + 0.92 * light / 15
           const r = (useTint ? tint[0] * 1.35 : 1) * lightFactor
           const g = (useTint ? tint[1] * 1.35 : 1) * lightFactor
           const bcol = (useTint ? tint[2] * 1.35 : 1) * lightFactor
@@ -363,7 +381,7 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
           const tile = alongX && alongZ ? TILE.RAIL_CURVED : TILE.RAIL
           const [u0, v0, u1, v1] = atlas.uvRect(tile)
           const light = sampleLight(wx, y, wz)
-          const lightFactor = 0.28 + 0.72 * light / 15
+          const lightFactor = 0.08 + 0.92 * light / 15
           const ry = y + 0.0625
           // rotate the texture 90° when the track runs along X
           const uvs: [number, number][] = alongX && !alongZ
@@ -413,8 +431,21 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
             tr *= lv; tg *= lv; tb *= lv * 0.95
           }
           const light = sampleLight(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
-          const lightFactor = 0.28 + 0.72 * light / 15
+          const lightFactor = 0.08 + 0.92 * light / 15
           tr *= lightFactor; tg *= lightFactor; tb *= lightFactor
+          if (isWater(nb)) {
+            const depth = Math.max(0, world.gen.seaLevel - (y + (fd.n[1] > 0 ? 1 : 0.5)))
+            const transmission = Math.exp(-depth * 0.14)
+            tr *= 0.04 + 0.96 * transmission
+            tg *= 0.10 + 0.90 * transmission
+            tb *= 0.16 + 0.84 * transmission
+          }
+          const blockLight = classicBlockLightColor(
+            sampleBlockLight(wx + fd.n[0], y + fd.n[1], wz + fd.n[2])
+          )
+          const blockR = blockLight[0] / lightFactor
+          const blockG = blockLight[1] / lightFactor
+          const blockB = blockLight[2] / lightFactor
 
           // ambient occlusion per corner
           const ao: number[] = []
@@ -453,7 +484,8 @@ export function buildChunkGeoms(world: World, chunk: Chunk, atlas: Atlas, grassD
               uvs[ci][0] === 0 ? u0 : u1,
               uvs[ci][1] === 0 ? v0 : v1,
               tr * shade, tg * shade, tb * shade,
-              isLeaf ? 0.4 : 0
+              isLeaf ? 0.4 : 0,
+              blockR, blockG, blockB
             )
           }
           // flip the quad diagonal for smoother AO interpolation

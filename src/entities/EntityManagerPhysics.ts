@@ -369,4 +369,68 @@ export function installEntityManagerPhysics(EntityManagerClass: EntityManagerCon
       }
     }
   }
+  prototype.resolvePlayerCollision = function(
+    this: EntityManager,
+    position: { x: number; y: number; z: number },
+    velocity: { x: number; z: number },
+    canOccupy: (x: number, y: number, z: number) => boolean
+  ): boolean {
+    const nearby = new Set<string>()
+    const minCx = Math.floor((position.x - 2) / CHUNK_SIZE)
+    const maxCx = Math.floor((position.x + 2) / CHUNK_SIZE)
+    const minCz = Math.floor((position.z - 2) / CHUNK_SIZE)
+    const maxCz = Math.floor((position.z + 2) / CHUNK_SIZE)
+    for (let cx = minCx; cx <= maxCx; cx++) for (let cz = minCz; cz <= maxCz; cz++) {
+      for (const id of this.spatial.get(cx * 0x100000000 + cz) ?? []) nearby.add(id)
+    }
+
+    let moved = false
+    for (const id of nearby) {
+      const entity = this.entities.get(id)
+      if (!entity || !entity.active || entity.health <= 0 || id === this.riddenPigId) continue
+      const scale = (entity.age < 0 ? 0.58 : 1) * (entity.sizeScale ?? 1)
+      if (position.y + 1.8 <= entity.y + 0.02 ||
+        position.y + 0.02 >= entity.y + entity.height * scale) continue
+      let dx = entity.x - position.x
+      let dz = entity.z - position.z
+      let distance = Math.hypot(dx, dz)
+      const minimum = 0.3 + entity.width * scale * 0.5
+      if (distance >= minimum) continue
+      if (distance < 0.001) {
+        const angle = Number.parseInt(entity.id.replace(/\D/g, ''), 10) * 0.754877666
+        dx = Math.cos(angle || 0.7)
+        dz = Math.sin(angle || 0.7)
+        distance = 1
+      }
+      const nx = dx / distance
+      const nz = dz / distance
+      const overlap = minimum - distance + 0.002
+      const playerShare = overlap * 0.52
+      const nextPlayerX = position.x - nx * playerShare
+      const nextPlayerZ = position.z - nz * playerShare
+      if (canOccupy(nextPlayerX, position.y, nextPlayerZ)) {
+        position.x = nextPlayerX
+        position.z = nextPlayerZ
+        moved = true
+      }
+
+      const oldX = entity.x, oldZ = entity.z
+      const oldKey = this.chunkKey(entity.x, entity.z)
+      entity.x += nx * overlap * 0.48
+      entity.z += nz * overlap * 0.48
+      if (this.collidesWorld(entity)) {
+        entity.x = oldX
+        entity.z = oldZ
+      } else {
+        this.index(entity, oldKey)
+        moved = true
+      }
+      const impulse = Math.min(1.6, 0.35 + overlap * 5)
+      entity.vx += nx * impulse
+      entity.vz += nz * impulse
+      velocity.x -= nx * impulse * 0.18
+      velocity.z -= nz * impulse * 0.18
+    }
+    return moved
+  }
 }

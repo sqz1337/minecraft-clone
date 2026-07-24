@@ -122,6 +122,8 @@ export class Game {
 
   weather = new Weather()
 
+  weatherExposure = 1
+
   audio = new AudioMan()
 
   state: GameState = 'title'
@@ -244,11 +246,11 @@ export class Game {
       ui.onFullscreenChanged = (fullscreen) => { void desktopWindow.fullscreen(fullscreen) }
       ui.onInventoryToggle = () => this.toggleInventory()
       ui.onConsoleClose = (text) => this.closeConsole(text)
-      ui.onInventorySlotClick = (slot, button) => this.inventorySlotClick(slot, button)
-      ui.onArmorSlotClick = (slot, button) => this.armorSlotClick(slot, button)
-      ui.onCraftSlotClick = (index, button) => this.craftSlotClick(index, button)
+      ui.onInventorySlotClick = (slot, button, shift) => this.inventorySlotClick(slot, button, shift)
+      ui.onArmorSlotClick = (slot, button, shift) => this.armorSlotClick(slot, button, shift)
+      ui.onCraftSlotClick = (index, button, shift) => this.craftSlotClick(index, button, shift)
       ui.onCraftResultClick = () => this.craftResultClick()
-      ui.onContainerSlotClick = (index, button) => this.containerSlotClick(index, button)
+      ui.onContainerSlotClick = (index, button, shift) => this.containerSlotClick(index, button, shift)
       ui.onEnchantSlotClick = (button) => this.enchantSlotClick(button)
       ui.onEnchantOfferClick = (index) => this.enchantOfferClick(index)
       ui.onTradeClick = (index) => this.tradeClick(index)

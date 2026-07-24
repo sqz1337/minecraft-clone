@@ -252,16 +252,17 @@ export class Environment {
     )
 
     this.hemi.color.copy(C.hemiSkyNight).lerp(C.hemiSkyDay, dayF)
-    this.hemi.intensity = (0.82 + 0.38 * dayF) * (1 - overcast * 0.24)
-    // Keep moonless surfaces readable, like classic Minecraft's minimum sky
-    // light, without relying on a player-mounted light source.
-    this.ambient.intensity = 0.36 - 0.15 * dayF + U.uFlash.value * 1.6
+    // Terrain already carries propagated sky/block light in its vertex
+    // colours. Keep global fill deliberately weak so it cannot illuminate
+    // sealed caves through stone.
+    this.hemi.intensity = (0.22 + 0.18 * dayF) * (1 - overcast * 0.24)
+    this.ambient.intensity = 0.1 - 0.04 * dayF + U.uFlash.value * 1.15
 
     // fog
     const baseDensity = horizonFogDensity(viewDist, playerPos.y)
     if (underwater) {
       this.fog.color.copy(C.underwater).multiplyScalar(0.35 + dayF * 0.65)
-      this.fog.density = 0.075
+      this.fog.density = 0.095
     } else if (this.silentHill) {
       this.fog.color.copy(C.silentHillFog)
       // Exp2 density 0.032 leaves nearby blocks crisp while silhouettes fade

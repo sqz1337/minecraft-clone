@@ -35,6 +35,29 @@ export const FACES: FaceDef[] = [
 ]
 export const AO_CURVE = [0.42, 0.62, 0.8, 1.0]
 export const WATER_SURFACE = 0.875
+
+/** Exact 1.2.5 WorldProvider brightness curve for light levels 0..15. */
+export function classicLightBrightness(level: number): number {
+  const clamped = Math.max(0, Math.min(15, level))
+  const darkness = 1 - clamped / 15
+  return (1 - darkness) / (darkness * 3 + 1)
+}
+
+/** Block-light branch of the 1.2.5 lightmap, including its warm torch tint. */
+export function classicBlockLightColor(level: number): readonly [number, number, number] {
+  if (level <= 0) return [0, 0, 0]
+  const light = classicLightBrightness(level) * 1.5
+  const finish = (value: number): number => {
+    const clamped = Math.min(1, value)
+    return Math.min(1, (clamped * 0.96 + 0.03) * 0.96 + 0.03)
+  }
+  return [
+    finish(light),
+    finish(light * ((light * 0.6 + 0.4) * 0.6 + 0.4)),
+    finish(light * (light * light * 0.6 + 0.4))
+  ]
+}
+
 export class GeomBuilder {
   private capacity: number
   private pos: Float32Array
@@ -42,6 +65,7 @@ export class GeomBuilder {
   private uv: Float32Array
   private col: Float32Array
   private sway: Float32Array
+  private blockLight: Float32Array
   private idx: Uint32Array
   vcount = 0
   private icount = 0
@@ -53,6 +77,7 @@ export class GeomBuilder {
     this.uv = new Float32Array(capacity * 2)
     this.col = new Float32Array(capacity * 3)
     this.sway = new Float32Array(capacity)
+    this.blockLight = new Float32Array(capacity * 3)
     this.idx = new Uint32Array((capacity * 3) >> 1)
   }
 
@@ -73,12 +98,22 @@ export class GeomBuilder {
     this.uv = grown(this.uv, 2)
     this.col = grown(this.col, 3)
     this.sway = grown(this.sway, 1)
+    this.blockLight = grown(this.blockLight, 3)
     const idx = new Uint32Array((this.capacity * 3) >> 1)
     idx.set(this.idx)
     this.idx = idx
   }
 
-  vertex(x: number, y: number, z: number, nx: number, ny: number, nz: number, u: number, v: number, r: number, g: number, b: number, sw: number): void {
+  vertex(
+    x: number, y: number, z: number,
+    nx: number, ny: number, nz: number,
+    u: number, v: number,
+    r: number, g: number, b: number,
+    sw: number,
+    blockLightR = 0,
+    blockLightG = blockLightR,
+    blockLightB = blockLightR
+  ): void {
     if (this.vcount >= this.capacity) this.grow()
     const v3 = this.vcount * 3, v2 = this.vcount * 2
     this.pos[v3] = x; this.pos[v3 + 1] = y; this.pos[v3 + 2] = z
@@ -86,6 +121,9 @@ export class GeomBuilder {
     this.uv[v2] = u; this.uv[v2 + 1] = v
     this.col[v3] = r; this.col[v3 + 1] = g; this.col[v3 + 2] = b
     this.sway[this.vcount] = sw
+    this.blockLight[v3] = blockLightR
+    this.blockLight[v3 + 1] = blockLightG
+    this.blockLight[v3 + 2] = blockLightB
     this.vcount++
   }
 
@@ -109,6 +147,7 @@ export class GeomBuilder {
     g.setAttribute('normal', new THREE.BufferAttribute(this.nrm.slice(0, this.vcount * 3), 3))
     g.setAttribute('uv', new THREE.BufferAttribute(this.uv.slice(0, this.vcount * 2), 2))
     g.setAttribute('color', new THREE.BufferAttribute(this.col.slice(0, this.vcount * 3), 3))
+    g.setAttribute('aBlockLight', new THREE.BufferAttribute(this.blockLight.slice(0, this.vcount * 3), 3))
     if (withSway) g.setAttribute('aSway', new THREE.BufferAttribute(this.sway.slice(0, this.vcount), 1))
     g.setIndex(new THREE.BufferAttribute(this.idx.slice(0, this.icount), 1))
     g.computeBoundingSphere()
@@ -121,6 +160,7 @@ export class WaterBuilder {
   private nrm: Float32Array
   private uv: Float32Array
   private top: Float32Array
+  private depth: Float32Array
   private idx: Uint32Array
   vcount = 0
   private icount = 0
@@ -131,6 +171,7 @@ export class WaterBuilder {
     this.nrm = new Float32Array(capacity * 3)
     this.uv = new Float32Array(capacity * 2)
     this.top = new Float32Array(capacity)
+    this.depth = new Float32Array(capacity)
     this.idx = new Uint32Array((capacity * 3) >> 1)
   }
 
@@ -145,16 +186,24 @@ export class WaterBuilder {
     const nrm = new Float32Array(this.capacity * 3); nrm.set(this.nrm); this.nrm = nrm
     const uv = new Float32Array(this.capacity * 2); uv.set(this.uv); this.uv = uv
     const top = new Float32Array(this.capacity); top.set(this.top); this.top = top
+    const depth = new Float32Array(this.capacity); depth.set(this.depth); this.depth = depth
     const idx = new Uint32Array((this.capacity * 3) >> 1); idx.set(this.idx); this.idx = idx
   }
 
-  vertex(x: number, y: number, z: number, nx: number, ny: number, nz: number, u: number, v: number, isTop: number): void {
+  vertex(
+    x: number, y: number, z: number,
+    nx: number, ny: number, nz: number,
+    u: number, v: number,
+    isTop: number,
+    depth = 0
+  ): void {
     if (this.vcount >= this.capacity) this.grow()
     const v3 = this.vcount * 3, v2 = this.vcount * 2
     this.pos[v3] = x; this.pos[v3 + 1] = y; this.pos[v3 + 2] = z
     this.nrm[v3] = nx; this.nrm[v3 + 1] = ny; this.nrm[v3 + 2] = nz
     this.uv[v2] = u; this.uv[v2 + 1] = v
     this.top[this.vcount] = isTop
+    this.depth[this.vcount] = depth
     this.vcount++
   }
 
@@ -173,6 +222,7 @@ export class WaterBuilder {
     g.setAttribute('normal', new THREE.BufferAttribute(this.nrm.slice(0, this.vcount * 3), 3))
     g.setAttribute('uv', new THREE.BufferAttribute(this.uv.slice(0, this.vcount * 2), 2))
     g.setAttribute('aTop', new THREE.BufferAttribute(this.top.slice(0, this.vcount), 1))
+    g.setAttribute('aWaterDepth', new THREE.BufferAttribute(this.depth.slice(0, this.vcount), 1))
     g.setIndex(new THREE.BufferAttribute(this.idx.slice(0, this.icount), 1))
     g.computeBoundingSphere()
     return g
